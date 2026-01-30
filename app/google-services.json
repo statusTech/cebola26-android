@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "681956478595",
+    "project_id": "oi-cebola-api",
+    "storage_bucket": "oi-cebola-api.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:681956478595:android:4dea8f31d8b599749255b6",
+        "android_client_info": {
+          "package_name": "com.oitickets.cebola26"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA74pyoCBIAHld0VGekfgfrmZ44on7Kdn4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
