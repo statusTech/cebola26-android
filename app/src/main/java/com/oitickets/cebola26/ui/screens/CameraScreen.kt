@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.*
@@ -71,6 +73,11 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
+    // Estado para controlar a câmera (Zoom, Flash, Foco)
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    // Estado do Flash (Ligado/Desligado)
+    var isFlashOn by remember { mutableStateOf(false) }
+
     val executor = remember { Executors.newSingleThreadExecutor() }
 
     var isProcessing by remember { mutableStateOf(false) }
@@ -136,14 +143,15 @@ fun CameraScreen(
 
                     try {
                         cameraProvider.unbindAll()
-                        // Câmera Traseira
-                        cameraProvider.bindToLifecycle(
+                        // Câmera Traseira e captura da instância 'cam' para controle
+                        val cam = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             imageCapture,
                             imageAnalysis
                         )
+                        camera = cam
                     } catch (e: Exception) {
                         Log.e("CameraScreen", "Erro ao iniciar câmera", e)
                     }
@@ -155,7 +163,7 @@ fun CameraScreen(
 
         CameraOverlay(isFaceGood = viewModel.isFaceGood)
 
-        // Header com Feedback
+        // Header com Controles (Flash e Fechar)
         if (!isProcessing) {
             Row(
                 modifier = Modifier
@@ -165,6 +173,26 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // 1. Botão Flash (NOVO)
+                IconButton(
+                    onClick = {
+                        if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                            isFlashOn = !isFlashOn
+                            camera?.cameraControl?.enableTorch(isFlashOn)
+                        }
+                    },
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        .size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                        contentDescription = "Flash",
+                        tint = if (isFlashOn) Color(0xFFFFCA28) else Color.White
+                    )
+                }
+
+                // 2. Status Badge
                 val statusColor by animateColorAsState(
                     if (viewModel.isFaceGood) Color(0xFF2E7D32) else Color(0xFFB00020), label = "color"
                 )
@@ -194,6 +222,7 @@ fun CameraScreen(
                     }
                 }
 
+                // 3. Botão Fechar
                 IconButton(
                     onClick = onCancel,
                     modifier = Modifier

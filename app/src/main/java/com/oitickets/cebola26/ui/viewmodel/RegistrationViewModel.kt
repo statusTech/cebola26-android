@@ -241,7 +241,7 @@ class RegistrationViewModel(
     // 3. Passo Foto
     fun onStartCamera() {
         // Define o desafio de Liveness (Blink)
-        currentLivenessAction = LivenessAction.BLINK
+        currentLivenessAction = LivenessAction.NONE
 
         isFaceGood = false
         cameraFeedback = "Centralize o rosto"
