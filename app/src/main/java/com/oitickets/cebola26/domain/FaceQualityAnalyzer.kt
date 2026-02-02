@@ -1,5 +1,6 @@
 package com.oitickets.cebola26.domain
 
+import android.graphics.Rect
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -10,9 +11,9 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlin.math.abs
 
 enum class LivenessAction {
-    NONE,       // Apenas posicionar
-    SMILE,      // Sorrir
-    BLINK       // Piscar ambos os olhos
+    NONE,
+    SMILE,
+    BLINK
 }
 
 class FaceQualityAnalyzer(
@@ -31,8 +32,6 @@ class FaceQualityAnalyzer(
         .build()
 
     private val detector = FaceDetection.getClient(options)
-
-    // Controle para não disparar o callback de sucesso múltiplas vezes seguidas
     private var lastActionSuccessTime = 0L
 
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
@@ -41,34 +40,41 @@ class FaceQualityAnalyzer(
         if (mediaImage != null) {
             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
 
+            // Dimensões da imagem para cálculo de centro
+            val imgWidth = image.width.toFloat()
+            val imgHeight = image.height.toFloat()
+
             detector.process(image)
                 .addOnSuccessListener { faces ->
                     if (faces.isEmpty()) {
-                        // CRÍTICO: Avisa que perdeu o rosto para resetar a UI
                         onQualityUpdate(false, "Nenhum rosto detectado")
                     } else {
                         val face = faces.first()
 
-                        // 1. Verifica posicionamento contínuo
-                        if (!isFacePositionGood(face)) {
-                            onQualityUpdate(false, "Centralize o rosto e olhe para frente")
+                        // 1. Verifica Enquadramento (Oval)
+                        val centeringResult = checkCentering(face.boundingBox, imgWidth, imgHeight)
+                        if (!centeringResult.first) {
+                            onQualityUpdate(false, centeringResult.second)
                             return@addOnSuccessListener
                         }
 
-                        // 2. Verifica Prova de Vida
+                        // 2. Verifica Rotação (Cabeça reta)
+                        if (!isFaceStraight(face)) {
+                            onQualityUpdate(false, "Mantenha a cabeça reta")
+                            return@addOnSuccessListener
+                        }
+
+                        // 3. Verifica Prova de Vida (Piscar)
                         val actionResult = checkLivenessAction(face)
 
                         if (actionResult) {
-                            // Debounce de 2 segundos para evitar disparos loucos
                             val now = System.currentTimeMillis()
                             if (now - lastActionSuccessTime > 2000) {
                                 lastActionSuccessTime = now
                                 onActionCompleted()
                             }
-                            // Mantém feedback positivo
                             onQualityUpdate(true, "Rosto Verificado!")
                         } else {
-                            // Feedback de instrução
                             val instruction = when(targetAction) {
                                 LivenessAction.SMILE -> "Por favor, SORRIA!"
                                 LivenessAction.BLINK -> "PISQUE os olhos devagar"
@@ -89,10 +95,37 @@ class FaceQualityAnalyzer(
         }
     }
 
-    private fun isFacePositionGood(face: Face): Boolean {
-        val rotY = face.headEulerAngleY
-        val rotZ = face.headEulerAngleZ
-        return abs(rotY) < 15 && abs(rotZ) < 15
+    // Verifica se o rosto está centralizado e com bom tamanho
+    private fun checkCentering(box: Rect, imgWidth: Float, imgHeight: Float): Pair<Boolean, String> {
+        val centerX = box.centerX().toFloat()
+        val centerY = box.centerY().toFloat()
+
+        // Desvio permitido do centro (15% da largura/altura)
+        val toleranceX = imgWidth * 0.15f
+        val toleranceY = imgHeight * 0.20f // Tolerância vertical um pouco maior
+
+        val isCenteredX = abs(centerX - (imgWidth / 2)) < toleranceX
+        val isCenteredY = abs(centerY - (imgHeight / 2)) < toleranceY
+
+        if (!isCenteredX || !isCenteredY) {
+            return Pair(false, "Centralize o rosto no oval")
+        }
+
+        // Verifica tamanho (se está muito longe)
+        // O rosto deve ocupar pelo menos 40% da largura da imagem
+        val faceWidthRatio = box.width().toFloat() / imgWidth
+        if (faceWidthRatio < 0.40f) {
+            return Pair(false, "Aproxime o rosto")
+        }
+
+        return Pair(true, "")
+    }
+
+    private fun isFaceStraight(face: Face): Boolean {
+        val rotY = face.headEulerAngleY // Esquerda/Direita
+        val rotZ = face.headEulerAngleZ // Inclinação
+        // Tolerância de 12 graus
+        return abs(rotY) < 12 && abs(rotZ) < 12
     }
 
     private fun checkLivenessAction(face: Face): Boolean {
@@ -102,8 +135,8 @@ class FaceQualityAnalyzer(
             LivenessAction.BLINK -> {
                 val leftOpen = face.leftEyeOpenProbability ?: 1f
                 val rightOpen = face.rightEyeOpenProbability ?: 1f
-                // Piscar: Olhos fechados (< 0.1)
-                leftOpen < 0.1f && rightOpen < 0.1f
+                // Considera piscada se os olhos estiverem quase fechados
+                leftOpen < 0.15f && rightOpen < 0.15f
             }
         }
     }
