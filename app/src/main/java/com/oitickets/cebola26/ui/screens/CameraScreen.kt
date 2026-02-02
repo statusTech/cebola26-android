@@ -51,6 +51,7 @@ import com.oitickets.cebola26.domain.FaceQualityAnalyzer
 import com.oitickets.cebola26.ui.viewmodel.RegistrationViewModel
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.max
 
 @Composable
@@ -75,7 +76,6 @@ fun CameraScreen(
     var isProcessing by remember { mutableStateOf(false) }
     var isLivenessPassed by remember { mutableStateOf(false) }
 
-    // Verifica se foto é opcional para habilitar botão de pular
     val canSkip = !viewModel.rules.requirePhoto
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -93,6 +93,7 @@ fun CameraScreen(
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
+                    // Configura captura para priorizar qualidade máxima (reduz blur)
                     imageCapture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                         .build()
@@ -105,7 +106,6 @@ fun CameraScreen(
                                 targetAction = viewModel.currentLivenessAction,
                                 onQualityUpdate = { isGood, msg ->
                                     if (!isProcessing) {
-                                        // Se perder o rosto (moveu o celular), perde o status de validado
                                         if (msg.contains("Nenhum rosto", ignoreCase = true) ||
                                             msg.contains("Centralize", ignoreCase = true)) {
                                             isLivenessPassed = false
@@ -121,7 +121,6 @@ fun CameraScreen(
                                     }
                                 },
                                 onActionCompleted = {
-                                    // Ação de Liveness detectada! Libera o botão.
                                     if (!isLivenessPassed) {
                                         isLivenessPassed = true
                                         viewModel.isFaceGood = true
@@ -133,10 +132,9 @@ fun CameraScreen(
 
                     try {
                         cameraProvider.unbindAll()
-                        // Câmera Traseira
                         cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            CameraSelector.DEFAULT_FRONT_CAMERA,
                             preview,
                             imageCapture,
                             imageAnalysis
@@ -219,7 +217,7 @@ fun CameraScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(48.dp))
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Processando...", color = Color.White, fontSize = 12.sp)
+                    Text("Validando foto...", color = Color.White, fontSize = 12.sp)
                 }
             } else {
                 Row(
@@ -227,16 +225,16 @@ fun CameraScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Botão Pular (Se não for obrigatória)
+                    // Botão Pular
                     if (canSkip) {
                         TextButton(onClick = { viewModel.submitRegistration() }) {
                             Text("PULAR", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     } else {
-                        Spacer(modifier = Modifier.width(60.dp)) // Spacer para centralizar
+                        Spacer(modifier = Modifier.width(60.dp))
                     }
 
-                    // Botão Disparo Manual (Centro)
+                    // Botão Disparo Manual
                     val buttonScale by animateFloatAsState(if (viewModel.isFaceGood) 1f else 0.8f, label = "scale")
                     val buttonAlpha by animateFloatAsState(if (viewModel.isFaceGood) 1f else 0.3f, label = "alpha")
 
@@ -264,10 +262,15 @@ fun CameraScreen(
                                                 onPhotoTaken(bitmap)
                                             }
                                         },
-                                        onError = {
+                                        onError = { errorMsg ->
                                             Handler(Looper.getMainLooper()).post {
                                                 isProcessing = false
-                                                Toast.makeText(context, "Erro ao capturar", Toast.LENGTH_SHORT).show()
+                                                // Exibe o motivo da rejeição (ex: Rosto virado)
+                                                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                                                // Reseta estados para forçar nova tentativa
+                                                viewModel.isFaceGood = false
+                                                viewModel.cameraFeedback = "Tente novamente"
+                                                isLivenessPassed = false
                                             }
                                         }
                                     )
@@ -275,7 +278,7 @@ fun CameraScreen(
                             }
                     )
 
-                    Spacer(modifier = Modifier.width(60.dp)) // Espaço direita
+                    Spacer(modifier = Modifier.width(60.dp))
                 }
             }
         }
@@ -292,7 +295,7 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            // Overlay no topo para instrução
+            // Overlay sutil
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -304,7 +307,7 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
             )
         }
 
-        // Barra Inferior de Ação
+        // Barra Inferior de Ação - LAYOUT CORRIGIDO
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 16.dp
@@ -313,34 +316,37 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp), // Espaçamento fixo entre botões
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Botão 1: Peso 1 para dividir espaço
                 OutlinedButton(
                     onClick = { viewModel.retakePhoto() },
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f).height(50.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("TIRAR OUTRA")
+                    Text("REFAZER", fontSize = 12.sp, maxLines = 1)
                 }
 
+                // Botão 2: Peso 1 para dividir espaço
                 Button(
                     onClick = { viewModel.submitRegistration() },
-                    modifier = Modifier.height(50.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    modifier = Modifier.weight(1f).height(50.dp)
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null)
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("SALVAR (3/3)")
+                    Text("SALVAR", fontSize = 12.sp, maxLines = 1)
                 }
             }
         }
     }
 }
 
-// --- Componentes Visuais e Funções Auxiliares ---
+// ... Overlay e Utils ...
 
 @Composable
 fun CameraOverlay(isFaceGood: Boolean) {
@@ -371,7 +377,7 @@ fun CameraOverlay(isFaceGood: Boolean) {
             style = Stroke(width = 4.dp.toPx())
         )
 
-        // Cantoneiras "Tech"
+        // Cantoneiras Tech
         val cornerLength = 40.dp.toPx()
         val stroke = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
 
@@ -386,14 +392,15 @@ fun CameraOverlay(isFaceGood: Boolean) {
     }
 }
 
+// --- DUPLA VERIFICAÇÃO ---
 fun captureAndCrop(
     context: Context,
     imageCapture: ImageCapture?,
     executor: Executor,
     onSuccess: (Bitmap) -> Unit,
-    onError: () -> Unit
+    onError: (String) -> Unit // Agora recebe uma mensagem de erro
 ) {
-    val imgCap = imageCapture ?: run { onError(); return }
+    val imgCap = imageCapture ?: run { onError("Câmera não inicializada"); return }
 
     imgCap.takePicture(
         executor,
@@ -403,9 +410,12 @@ fun captureAndCrop(
                     val originalBitmap = imageProxyToBitmap(imageProxy)
                     imageProxy.close()
 
+                    // Revalidação na imagem capturada (ALTA PRECISÃO)
                     val detector = FaceDetection.getClient(
                         FaceDetectorOptions.Builder()
-                            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                             .build()
                     )
 
@@ -414,24 +424,39 @@ fun captureAndCrop(
                     detector.process(image)
                         .addOnSuccessListener(executor) { faces ->
                             if (faces.isNotEmpty()) {
+                                // Pega o maior rosto
                                 val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
+
+                                // --- VALIDAÇÃO FINAL ---
+                                // Se na foto final o rosto estiver muito virado, rejeita.
+                                // Tolerância um pouco maior (15 graus) para evitar frustração
+                                val rotY = face.headEulerAngleY
+                                val rotZ = face.headEulerAngleZ
+
+                                if (abs(rotY) > 15 || abs(rotZ) > 15) {
+                                    onError("Rosto virado na foto. Olhe para frente.")
+                                    return@addOnSuccessListener
+                                }
+
+                                // Se passou, corta e redimensiona
                                 val croppedBitmap = cropBitmapToFace(originalBitmap, face.boundingBox)
                                 val optimizedBitmap = resizeBitmap(croppedBitmap, 800)
                                 onSuccess(optimizedBitmap)
                             } else {
-                                val optimizedBitmap = resizeBitmap(originalBitmap, 800)
-                                onSuccess(optimizedBitmap)
+                                onError("Nenhum rosto identificado na foto. Tente novamente.")
                             }
                         }
-                        .addOnFailureListener(executor) { onError() }
+                        .addOnFailureListener(executor) {
+                            onError("Erro ao processar rosto: ${it.message}")
+                        }
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    onError()
+                    onError("Erro interno na captura.")
                 }
             }
 
             override fun onError(exception: ImageCaptureException) {
-                onError()
+                onError("Erro na câmera: ${exception.message}")
             }
         }
     )
