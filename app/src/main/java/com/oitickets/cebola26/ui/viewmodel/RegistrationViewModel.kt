@@ -172,9 +172,18 @@ class RegistrationViewModel(
 
     fun onQrCodeScanned(code: String) {
         qrCode = code
-        qrCodeFieldError = null
-        isQrManualMode = true
-        _uiState.value = RegistrationUiState.StepQr
+
+        val isNumeric = code.all { it.isDigit() }
+        val isValidLength = code.length == 12
+
+        if (isNumeric && isValidLength) {
+            qrCodeFieldError = null
+            _uiState.value = RegistrationUiState.StepData
+        } else {
+            qrCodeFieldError = "QR Code Inválido"
+            isQrManualMode = true
+            _uiState.value = RegistrationUiState.StepQr
+        }
     }
 
     fun updateQrCode(input: String) {
