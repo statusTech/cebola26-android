@@ -223,9 +223,13 @@ class RegistrationViewModel(
         // Validação do Passo 2
         if (rules.requireName && name.isBlank()) return
 
-        if (rules.requireCpf) {
+        if (rules.requireCpf || cpf.isNotEmpty()) {
             if (cpf.length != 11) {
                 cpfFieldError = "CPF Incompleto"
+                return
+            }
+            if (!isCpfValid(cpf)) {
+                cpfFieldError = "CPF Inválido"
                 return
             }
         }
@@ -353,6 +357,31 @@ class RegistrationViewModel(
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         return sdf.format(Date())
+    }
+
+    private fun isCpfValid(cpf: String): Boolean {
+        val cleanCpf = cpf.filter { it.isDigit() }
+        if (cleanCpf.length != 11) return false
+        // Verifica se todos os dígitos são iguais (ex: 111.111.111-11 é inválido)
+        if (cleanCpf.all { it == cleanCpf[0] }) return false
+
+        try {
+            var sum = 0
+            for (i in 0..8) sum += (cleanCpf[i] - '0') * (10 - i)
+            var remainder = 11 - (sum % 11)
+            val digit1 = if (remainder >= 10) 0 else remainder
+
+            if (digit1 != (cleanCpf[9] - '0')) return false
+
+            sum = 0
+            for (i in 0..9) sum += (cleanCpf[i] - '0') * (11 - i)
+            remainder = 11 - (sum % 11)
+            val digit2 = if (remainder >= 10) 0 else remainder
+
+            return digit2 == (cleanCpf[10] - '0')
+        } catch (e: Exception) {
+            return false
+        }
     }
 }
 
