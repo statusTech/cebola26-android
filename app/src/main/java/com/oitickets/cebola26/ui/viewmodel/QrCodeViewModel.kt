@@ -23,9 +23,12 @@ class QrCodeViewModel(
 
     // --- Ações de UI ---
 
-    fun onStartQrScanner() {
-        isQrManualMode = false
-        qrCodeFieldError = null
+    fun onStartQrScanner(blank: Boolean) {
+        if (blank) {
+            isQrManualMode = false
+            qrCode = ""
+            qrCodeFieldError = null
+        }
     }
 
     fun onQrCodeScanned(code: String) {

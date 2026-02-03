@@ -63,7 +63,7 @@ fun QrStepScreen(
                     OutlinedTextField(
                         value = qrViewModel.qrCode,
                         onValueChange = { qrViewModel.updateQrCode(it) },
-                        placeholder = { Text("000000000000") },
+                        placeholder = { Text("QR CODE") },
                         leadingIcon = { Icon(Icons.Default.QrCode, null) },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Text,

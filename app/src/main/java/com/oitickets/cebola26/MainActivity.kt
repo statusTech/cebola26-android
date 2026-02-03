@@ -108,6 +108,8 @@ class MainActivity : ComponentActivity() {
                             }
 
                             is RegistrationUiState.StepQr -> {
+                                qrViewModel.onStartQrScanner(viewModel.qrCode.isBlank() )
+
                                 QrStepScreen(
                                     qrViewModel = qrViewModel,
                                     rules = viewModel.rules,
