@@ -1,17 +1,28 @@
 package com.oitickets.cebola26.data.repository
 
+import android.content.Context
 import android.graphics.Bitmap
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
+import com.google.gson.Gson
 import com.oitickets.cebola26.data.model.Participant
 import com.oitickets.cebola26.data.model.RegistrationRules
 import com.oitickets.cebola26.data.model.Staff
+import com.oitickets.cebola26.data.worker.UploadWorker
 import kotlinx.coroutines.tasks.await
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
-class RegistrationRepository {
+class RegistrationRepository(private val context: Context) {
     private val db = FirebaseFirestore.getInstance()
-    private val storage = FirebaseStorage.getInstance()
+    private val gson = Gson()
+
 
     // --- REGRAS DE NEGÓCIO (FEATURE FLAGS) ---
 
@@ -91,25 +102,41 @@ class RegistrationRepository {
 
     suspend fun saveParticipant(participant: Participant, photoBitmap: Bitmap?): Result<Unit> {
         return try {
-            var downloadUrl = ""
+            var localImagePath = ""
 
+            // 1. Salva a imagem em arquivo local (Cache do app)
             if (photoBitmap != null) {
-                val storageRef = storage.reference.child("faces/${participant.id}.jpg")
-                val baos = ByteArrayOutputStream()
-                photoBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
-                val data = baos.toByteArray()
-
-                storageRef.putBytes(data).await()
-                downloadUrl = storageRef.downloadUrl.await().toString()
+                val fileName = "temp_${participant.id}.jpg"
+                val file = File(context.filesDir, fileName)
+                FileOutputStream(file).use { out ->
+                    // Salva com qualidade reduzida (50) para otimizar
+                    photoBitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
+                }
+                localImagePath = file.absolutePath
             }
 
-            val finalParticipant = participant.copy(photoUrl = downloadUrl)
+            // 2. Prepara os dados para o Worker
+            val participantJson = gson.toJson(participant)
 
-            db.collection("participants")
-                .document(participant.id)
-                .set(finalParticipant)
-                .await()
+            val inputData = workDataOf(
+                "participant_json" to participantJson,
+                "local_image_path" to localImagePath
+            )
 
+            // 3. Configura restrições (Só roda quando tiver internet)
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            // 4. Cria e agenda a tarefa
+            val uploadWork = OneTimeWorkRequestBuilder<UploadWorker>()
+                .setConstraints(constraints)
+                .setInputData(inputData)
+                .build()
+
+            WorkManager.getInstance(context).enqueue(uploadWork)
+
+            // Retorna sucesso IMEDIATO para a UI, liberando o funcionário para o próximo cadastro
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()

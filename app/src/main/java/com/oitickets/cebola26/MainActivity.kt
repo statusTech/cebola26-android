@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
         requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         val prefs = getSharedPreferences("cebola_prefs", Context.MODE_PRIVATE)
         val viewModel: RegistrationViewModel by viewModels {
-            RegistrationViewModelFactory(prefs)
+            RegistrationViewModelFactory(prefs, applicationContext)
         }
 
         setContent {

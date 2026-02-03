@@ -114,7 +114,7 @@ class FaceQualityAnalyzer(
         // Verifica tamanho (se está muito longe)
         // O rosto deve ocupar pelo menos 40% da largura da imagem
         val faceWidthRatio = box.width().toFloat() / imgWidth
-        if (faceWidthRatio < 0.40f) {
+        if (faceWidthRatio < 0.25f) {
             return Pair(false, "Aproxime o rosto")
         }
 

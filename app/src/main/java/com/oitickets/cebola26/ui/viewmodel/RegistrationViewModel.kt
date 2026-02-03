@@ -1,5 +1,6 @@
 package com.oitickets.cebola26.ui.viewmodel
 
+import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import androidx.compose.runtime.getValue
@@ -385,11 +386,14 @@ class RegistrationViewModel(
     }
 }
 
-class RegistrationViewModelFactory(private val prefs: SharedPreferences) : ViewModelProvider.Factory {
+class RegistrationViewModelFactory(
+    private val prefs: SharedPreferences,
+    private val context: Context
+) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RegistrationViewModel::class.java)) {
-            return RegistrationViewModel(RegistrationRepository(), prefs) as T
+            return RegistrationViewModel(RegistrationRepository(context), prefs) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

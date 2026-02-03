@@ -83,6 +83,12 @@ dependencies {
     // Recomendado para usar .await() no lugar de addListener (opcional, mas limpa o código)
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
 
+    // WorkManager (Para tarefas offline/background)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Gson (Para converter o objeto Participant em JSON)
+    implementation("com.google.code.gson:gson:2.10.1")
+
 
     // --- Testes ---
     testImplementation(libs.junit)
