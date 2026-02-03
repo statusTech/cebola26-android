@@ -73,9 +73,7 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
-    // Estado para controlar a câmera (Zoom, Flash, Foco)
     var camera by remember { mutableStateOf<Camera?>(null) }
-    // Estado do Flash (Ligado/Desligado)
     var isFlashOn by remember { mutableStateOf(false) }
 
     val executor = remember { Executors.newSingleThreadExecutor() }
@@ -83,7 +81,6 @@ fun CameraScreen(
     var isProcessing by remember { mutableStateOf(false) }
     var isLivenessPassed by remember { mutableStateOf(false) }
 
-    // Verifica se foto é opcional para habilitar botão de pular
     val canSkip = !viewModel.rules.requirePhoto
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -101,7 +98,6 @@ fun CameraScreen(
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
-                    // Configura captura para priorizar qualidade máxima (reduz blur)
                     imageCapture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                         .build()
@@ -114,7 +110,6 @@ fun CameraScreen(
                                 targetAction = viewModel.currentLivenessAction,
                                 onQualityUpdate = { isGood, msg ->
                                     if (!isProcessing) {
-                                        // Se perder o rosto (moveu o celular), perde o status de validado
                                         if (msg.contains("Nenhum rosto", ignoreCase = true) ||
                                             msg.contains("Centralize", ignoreCase = true) ||
                                             msg.contains("Aproxime", ignoreCase = true)) {
@@ -131,7 +126,6 @@ fun CameraScreen(
                                     }
                                 },
                                 onActionCompleted = {
-                                    // Ação de Liveness detectada! Libera o botão.
                                     if (!isLivenessPassed) {
                                         isLivenessPassed = true
                                         viewModel.isFaceGood = true
@@ -143,10 +137,9 @@ fun CameraScreen(
 
                     try {
                         cameraProvider.unbindAll()
-                        // Câmera Traseira e captura da instância 'cam' para controle
                         val cam = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            CameraSelector.DEFAULT_FRONT_CAMERA,
                             preview,
                             imageCapture,
                             imageAnalysis
@@ -163,7 +156,7 @@ fun CameraScreen(
 
         CameraOverlay(isFaceGood = viewModel.isFaceGood)
 
-        // Header com Controles (Flash e Fechar)
+        // Header com Controles
         if (!isProcessing) {
             Row(
                 modifier = Modifier
@@ -173,7 +166,6 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 1. Botão Flash (NOVO)
                 IconButton(
                     onClick = {
                         if (camera?.cameraInfo?.hasFlashUnit() == true) {
@@ -181,9 +173,7 @@ fun CameraScreen(
                             camera?.cameraControl?.enableTorch(isFlashOn)
                         }
                     },
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                        .size(40.dp)
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
                 ) {
                     Icon(
                         imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
@@ -192,7 +182,6 @@ fun CameraScreen(
                     )
                 }
 
-                // 2. Status Badge
                 val statusColor by animateColorAsState(
                     if (viewModel.isFaceGood) Color(0xFF2E7D32) else Color(0xFFB00020), label = "color"
                 )
@@ -222,12 +211,9 @@ fun CameraScreen(
                     }
                 }
 
-                // 3. Botão Fechar
                 IconButton(
                     onClick = onCancel,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                        .size(40.dp)
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "Fechar", tint = Color.White)
                 }
@@ -259,16 +245,14 @@ fun CameraScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Botão Pular (Se não for obrigatória)
                     if (canSkip) {
                         TextButton(onClick = { viewModel.submitRegistration() }) {
                             Text("PULAR", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     } else {
-                        Spacer(modifier = Modifier.width(60.dp)) // Spacer para centralizar
+                        Spacer(modifier = Modifier.width(60.dp))
                     }
 
-                    // Botão Disparo Manual (Centro)
                     val buttonScale by animateFloatAsState(if (viewModel.isFaceGood) 1f else 0.8f, label = "scale")
                     val buttonAlpha by animateFloatAsState(if (viewModel.isFaceGood) 1f else 0.3f, label = "alpha")
 
@@ -299,9 +283,7 @@ fun CameraScreen(
                                         onError = { errorMsg ->
                                             Handler(Looper.getMainLooper()).post {
                                                 isProcessing = false
-                                                // Exibe motivo da rejeição
                                                 Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
-                                                // Reseta estados para forçar nova tentativa
                                                 viewModel.isFaceGood = false
                                                 viewModel.cameraFeedback = "Tente novamente"
                                                 isLivenessPassed = false
@@ -318,7 +300,6 @@ fun CameraScreen(
         }
     }
 }
-
 @Composable
 fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -329,7 +310,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            // Overlay no topo para instrução
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -341,7 +321,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
             )
         }
 
-        // Barra Inferior de Ação - LAYOUT OTIMIZADO
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 16.dp
@@ -353,7 +332,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Botão "Tirar Outra" (50% largura)
                 OutlinedButton(
                     onClick = { viewModel.retakePhoto() },
                     shape = RoundedCornerShape(12.dp),
@@ -364,7 +342,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                     Text("REFAZER", fontSize = 12.sp, maxLines = 1)
                 }
 
-                // Botão "Salvar" (50% largura)
                 Button(
                     onClick = { viewModel.submitRegistration() },
                     shape = RoundedCornerShape(12.dp),
@@ -379,8 +356,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
         }
     }
 }
-
-// --- Componentes Visuais e Funções Auxiliares ---
 
 @Composable
 fun CameraOverlay(isFaceGood: Boolean) {
@@ -464,9 +439,18 @@ fun captureAndCrop(
                                 val rotY = face.headEulerAngleY
                                 val rotZ = face.headEulerAngleZ
 
-                                // Validação: Tolerância de 15 graus na foto final
+                                // 1. Validação de Rotação (Tolerância de 15 graus na foto final)
                                 if (abs(rotY) > 15 || abs(rotZ) > 15) {
                                     onError("Rosto virado na foto. Olhe para frente.")
+                                    return@addOnSuccessListener
+                                }
+
+                                // 2. Validação de Olhos Abertos (NOVO)
+                                val leftEye = face.leftEyeOpenProbability ?: 0f
+                                val rightEye = face.rightEyeOpenProbability ?: 0f
+                                // Tolerância: 0.5 (50% de chance de estar aberto)
+                                if (leftEye < 0.5f || rightEye < 0.5f) {
+                                    onError("Abra os olhos para a foto.")
                                     return@addOnSuccessListener
                                 }
 

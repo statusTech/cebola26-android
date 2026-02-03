@@ -109,13 +109,11 @@ class RegistrationRepository(private val context: Context) {
                 val fileName = "temp_${participant.id}.jpg"
                 val file = File(context.filesDir, fileName)
                 FileOutputStream(file).use { out ->
-                    // Salva com qualidade reduzida (50) para otimizar
                     photoBitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
                 }
                 localImagePath = file.absolutePath
             }
 
-            // 2. Prepara os dados para o Worker
             val participantJson = gson.toJson(participant)
 
             val inputData = workDataOf(
@@ -123,12 +121,10 @@ class RegistrationRepository(private val context: Context) {
                 "local_image_path" to localImagePath
             )
 
-            // 3. Configura restrições (Só roda quando tiver internet)
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
-            // 4. Cria e agenda a tarefa
             val uploadWork = OneTimeWorkRequestBuilder<UploadWorker>()
                 .setConstraints(constraints)
                 .setInputData(inputData)
@@ -136,7 +132,6 @@ class RegistrationRepository(private val context: Context) {
 
             WorkManager.getInstance(context).enqueue(uploadWork)
 
-            // Retorna sucesso IMEDIATO para a UI, liberando o funcionário para o próximo cadastro
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()

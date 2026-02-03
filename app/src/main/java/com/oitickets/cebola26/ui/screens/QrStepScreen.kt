@@ -115,19 +115,16 @@ fun QrStepScreen(viewModel: RegistrationViewModel) {
                     onClick = {
                         // Validação Local Rigorosa ao clicar
                         val qrCode = viewModel.qrCode
-
-                        // Se tiver texto digitado, DEVE ser válido (mesmo se for opcional)
                         if (qrCode.isNotEmpty()) {
                             val isNumeric = qrCode.all { it.isDigit() }
                             val isValidLength = qrCode.length == 12
 
                             if (!isNumeric || !isValidLength) {
-                                viewModel.qrCodeFieldError = "QR Code Inválido (Deve ter 12 números)"
+                                viewModel.qrCodeFieldError = "QR Code Inválido"
                                 return@Button // Para aqui e não avança
                             }
                         }
 
-                        // Se passou na validação ou está vazio (e for opcional), deixa o VM decidir
                         viewModel.goToDataStep()
                     },
                     enabled = isNextEnabled,

@@ -39,29 +39,28 @@ class RegistrationViewModel(
     private var currentStaffId: String? = null
     private var currentStaffName: String? = null
 
-    // --- Regras de Negócio (Feature Flags) ---
+    // --- Regras ---
     var rules by mutableStateOf(RegistrationRules())
         private set
 
-    // --- Estados do Formulário ---
+    // --- Formulário ---
     var name by mutableStateOf("")
     var cpf by mutableStateOf("")
     var qrCode by mutableStateOf("")
     var cpfFieldError by mutableStateOf<String?>(null)
     var qrCodeFieldError by mutableStateOf<String?>(null)
 
-    // --- Controle de UI do Passo QR Code ---
+    // --- Controle de UI ---
     var isQrManualMode by mutableStateOf(false)
+    var isCheckingCpf by mutableStateOf(false)
 
-    // --- Estados da Câmera ---
+    // --- Câmera ---
     var capturedBitmap by mutableStateOf<Bitmap?>(null)
     var isFaceGood by mutableStateOf(false)
-    var cameraFeedback by mutableStateOf("Posicione o rosto no centro")
-
-    // --- Estado da Prova de Vida (Liveness) ---
+    var cameraFeedback by mutableStateOf("Posicione o rosto")
     var currentLivenessAction by mutableStateOf(LivenessAction.NONE)
 
-    // --- UI State (Fluxo de Navegação) ---
+    // --- UI State ---
     private val _uiState = MutableStateFlow<RegistrationUiState>(RegistrationUiState.Login)
     val uiState = _uiState.asStateFlow()
 
@@ -69,16 +68,12 @@ class RegistrationViewModel(
         checkSession()
     }
 
-    // --- SESSÃO E LOGIN ---
-
     private fun checkSession() {
         val savedId = prefs.getString("staff_id", null)
         val savedName = prefs.getString("staff_name", null)
-
         if (savedId != null && savedName != null) {
             currentStaffId = savedId
             currentStaffName = savedName
-            // Se já tem sessão, vai direto para o primeiro passo do fluxo
             _uiState.value = RegistrationUiState.StepQr
             fetchRules()
         }
@@ -86,72 +81,45 @@ class RegistrationViewModel(
 
     private fun fetchRules() {
         viewModelScope.launch(Dispatchers.IO) {
-            // Carrega as regras do Firestore
-            val loadedRules = repository.getRegistrationRules(currentStaffId)
-            rules = loadedRules
+            rules = repository.getRegistrationRules(currentStaffId)
         }
     }
 
-    // --- NAVEGAÇÃO / VOLTAR ---
+    // --- NAVEGAÇÃO ---
     fun navigateBack() {
         val currentState = _uiState.value
         when (currentState) {
-            // Se está nos Dados -> Volta para QR
             is RegistrationUiState.StepData -> _uiState.value = RegistrationUiState.StepQr
-            // Se está na Foto -> Volta para Dados
             is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
-            // Se está na Câmera/Scanner -> Cancela e volta para tela anterior adequada
             is RegistrationUiState.Camera -> cancelCamera()
             is RegistrationUiState.QrScanner -> cancelCamera()
-            else -> { /* Não faz nada (ex: Login, StepQr raiz) */ }
+            else -> { }
         }
     }
 
     fun performLogin() {
-        if (staffName.isBlank()) {
-            loginError = "Preencha seu nome."
-            return
-        }
-        if (staffPassword != "Cebol@26") {
-            loginError = "Senha incorreta."
-            return
-        }
+        if (staffName.isBlank()) { loginError = "Preencha seu nome."; return }
+        if (staffPassword != "Cebol@26") { loginError = "Senha incorreta."; return }
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val loginTime = getUtcTimestamp()
                 val existingStaff = repository.findStaffByName(staffName)
                 val staffId = existingStaff?.id ?: UUID.randomUUID().toString()
+                val staff = Staff(id = staffId, name = staffName, lastLogin = loginTime)
 
-                val staff = Staff(
-                    id = staffId,
-                    name = staffName,
-                    lastLogin = loginTime
-                )
-
-                val result = repository.saveStaffLogin(staff)
-
-                if (result.isSuccess) {
+                if (repository.saveStaffLogin(staff).isSuccess) {
                     currentStaffId = staffId
                     currentStaffName = staffName
-
-                    prefs.edit()
-                        .putString("staff_id", staffId)
-                        .putString("staff_name", staffName)
-                        .apply()
-
+                    prefs.edit().putString("staff_id", staffId).putString("staff_name", staffName).apply()
                     loginError = null
                     staffPassword = ""
-
-                    // Inicia fluxo no passo 1
                     _uiState.value = RegistrationUiState.StepQr
                     fetchRules()
                 } else {
-                    loginError = "Erro de conexão ao logar."
+                    loginError = "Erro de conexão."
                 }
-            } catch (e: Exception) {
-                loginError = "Erro: ${e.message}"
-            }
+            } catch (e: Exception) { loginError = "Erro: ${e.message}" }
         }
     }
 
@@ -166,17 +134,12 @@ class RegistrationViewModel(
 
     // --- FLUXO PASSO A PASSO ---
 
-    // 1. Passo QR Code
-    fun onStartQrScanner() {
-        _uiState.value = RegistrationUiState.QrScanner
-    }
+    fun onStartQrScanner() { _uiState.value = RegistrationUiState.QrScanner }
 
     fun onQrCodeScanned(code: String) {
         qrCode = code
-
         val isNumeric = code.all { it.isDigit() }
         val isValidLength = code.length == 12
-
         if (isNumeric && isValidLength) {
             qrCodeFieldError = null
             _uiState.value = RegistrationUiState.StepData
@@ -192,27 +155,16 @@ class RegistrationViewModel(
         if (qrCodeFieldError != null) qrCodeFieldError = null
     }
 
-    fun toggleQrManualMode() {
-        isQrManualMode = !isQrManualMode
-    }
+    fun toggleQrManualMode() { isQrManualMode = !isQrManualMode }
 
     fun goToDataStep() {
-        // Validação do Passo 1
-        // Se tiver algo digitado, valida o formato (independente se é obrigatório ou não)
-        if (qrCode.isNotBlank()) {
-            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) {
-                qrCodeFieldError = "QR Code Inválido (Deve ter 12 números)"
-                return
-            }
-        } else if (rules.requireQrCode) {
-            // Se estiver vazio e for obrigatório
-            qrCodeFieldError = "QR Code é obrigatório"
-            return
+        if (rules.requireQrCode) {
+            if (qrCode.isBlank()) { qrCodeFieldError = "QR Code é obrigatório"; return }
+            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) { qrCodeFieldError = "QR Code Inválido"; return }
         }
         _uiState.value = RegistrationUiState.StepData
     }
 
-    // 2. Passo Dados (Nome/CPF)
     fun updateCpf(input: String) {
         if (input.length <= 11) {
             cpf = input.filter { it.isDigit() }
@@ -220,56 +172,59 @@ class RegistrationViewModel(
         }
     }
 
+    // --- AQUI ESTÁ A MUDANÇA PRINCIPAL ---
     fun goToPhotoStep() {
-        // Validação do Passo 2
+        // 1. Validações Locais
         if (rules.requireName && name.isBlank()) return
 
-        if (rules.requireCpf || cpf.isNotEmpty()) {
-            if (cpf.length != 11) {
-                cpfFieldError = "CPF Incompleto"
-                return
-            }
-            if (!isCpfValid(cpf)) {
-                cpfFieldError = "CPF Inválido"
-                return
-            }
+        if (rules.requireCpf) {
+            if (cpf.length != 11) { cpfFieldError = "CPF Incompleto"; return }
+            if (!isCpfValid(cpf)) { cpfFieldError = "CPF Inválido"; return }
         }
 
-        // Prepara câmera para o Passo 3
-        onStartCamera()
+        val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
+
+        if (shouldCheckCpf) {
+            isCheckingCpf = true
+
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val exists = repository.checkCpfExists(cpf)
+                    if (exists) {
+                        cpfFieldError = "Este CPF já está cadastrado."
+                    } else {
+                        onStartCamera()
+                    }
+                } catch (e: Exception) {
+                    onStartCamera()
+                } finally {
+                    isCheckingCpf = false
+                }
+            }
+        } else {
+            // Se não precisa checar CPF, avança direto
+            onStartCamera()
+        }
     }
 
-    // 3. Passo Foto
     fun onStartCamera() {
-        // Define o desafio de Liveness (Blink)
-        currentLivenessAction = LivenessAction.NONE
-
+        currentLivenessAction = LivenessAction.BLINK
         isFaceGood = false
         cameraFeedback = "Centralize o rosto"
-        capturedBitmap = null // Limpa foto anterior
-
-        // Define o estado para a UI mostrar a câmera
+        capturedBitmap = null
         _uiState.value = RegistrationUiState.Camera
     }
 
     fun cancelCamera() {
-        // Se estava na Câmera -> volta para Passo Foto (que decide se mostra preview ou nada)
         if (_uiState.value is RegistrationUiState.Camera) {
             _uiState.value = RegistrationUiState.StepPhoto
-        }
-        // Se estava no Scanner -> volta para Passo QR
-        else if (_uiState.value is RegistrationUiState.QrScanner) {
+        } else if (_uiState.value is RegistrationUiState.QrScanner) {
             _uiState.value = RegistrationUiState.StepQr
-        }
-        // [AJUSTE] Se cancelou a câmera inicial do Passo 3 -> volta para Passo 2 (Dados)
-        else if (_uiState.value is RegistrationUiState.StepPhoto) {
-            _uiState.value = RegistrationUiState.StepData
         }
     }
 
     fun onPhotoCaptured(bitmap: Bitmap) {
         capturedBitmap = bitmap
-        // Volta para o Passo 3 (que agora mostrará o preview da foto capturada)
         _uiState.value = RegistrationUiState.StepPhoto
     }
 
@@ -278,36 +233,20 @@ class RegistrationViewModel(
         onStartCamera()
     }
 
-    // --- FINALIZAR CADASTRO ---
-
     fun submitRegistration() {
-        // Validação Final (Passo 3)
         if (rules.requirePhoto && capturedBitmap == null) return
-
-        // Validação Extra de QR Code para garantir consistência
-        if (qrCode.isNotBlank()) {
-            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) {
-                // QR Inválido não deveria chegar aqui, mas bloqueia envio
-                return
-            }
-        } else if (rules.requireQrCode) {
-            return
-        }
 
         _uiState.value = RegistrationUiState.Uploading
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Checa duplicidade de CPF se necessário
+                // Dupla checagem de CPF (segurança extra)
                 val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
-
                 if (shouldCheckCpf && repository.checkCpfExists(cpf)) {
-                    cpfFieldError = "Este CPF já está cadastrado."
-                    // Volta para o passo 2 para corrigir o CPF
+                    cpfFieldError = "CPF já cadastrado."
                     _uiState.value = RegistrationUiState.StepData
                 } else {
                     val timestamp = getUtcTimestamp()
-
                     val participant = Participant(
                         id = UUID.randomUUID().toString(),
                         name = name,
@@ -322,7 +261,7 @@ class RegistrationViewModel(
                     if (result.isSuccess) {
                         _uiState.value = RegistrationUiState.Success
                         delay(1500)
-                        resetNewFlow() // Reinicia o fluxo
+                        resetNewFlow()
                         fetchRules()
                     } else {
                         _uiState.value = RegistrationUiState.Error("Falha ao salvar dados.")
@@ -331,7 +270,6 @@ class RegistrationViewModel(
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
                 _uiState.value = RegistrationUiState.Error("Erro: ${e.message}")
                 delay(3000)
                 _uiState.value = RegistrationUiState.StepPhoto
@@ -339,7 +277,6 @@ class RegistrationViewModel(
         }
     }
 
-    // Reseta o estado para iniciar um novo cadastro limpo
     private fun resetNewFlow() {
         name = ""
         cpf = ""
@@ -349,8 +286,6 @@ class RegistrationViewModel(
         capturedBitmap = null
         isQrManualMode = false
         isFaceGood = false
-
-        // Volta para o primeiro passo do fluxo
         _uiState.value = RegistrationUiState.StepQr
     }
 
@@ -363,26 +298,19 @@ class RegistrationViewModel(
     private fun isCpfValid(cpf: String): Boolean {
         val cleanCpf = cpf.filter { it.isDigit() }
         if (cleanCpf.length != 11) return false
-        // Verifica se todos os dígitos são iguais (ex: 111.111.111-11 é inválido)
         if (cleanCpf.all { it == cleanCpf[0] }) return false
-
         try {
             var sum = 0
             for (i in 0..8) sum += (cleanCpf[i] - '0') * (10 - i)
             var remainder = 11 - (sum % 11)
             val digit1 = if (remainder >= 10) 0 else remainder
-
             if (digit1 != (cleanCpf[9] - '0')) return false
-
             sum = 0
             for (i in 0..9) sum += (cleanCpf[i] - '0') * (11 - i)
             remainder = 11 - (sum % 11)
             val digit2 = if (remainder >= 10) 0 else remainder
-
             return digit2 == (cleanCpf[10] - '0')
-        } catch (e: Exception) {
-            return false
-        }
+        } catch (e: Exception) { return false }
     }
 }
 
