@@ -99,6 +99,9 @@ fun QrStepScreen(
                 QrScannerScreen(
                     onCodeScanned = { code ->
                         qrViewModel.onQrCodeScanned(code)
+                        qrViewModel.validateQrCode(rules) {
+                            onNext(qrViewModel.qrCode)
+                        }
                     },
                     onCancel = { qrViewModel.toggleQrManualMode() }
                 )
