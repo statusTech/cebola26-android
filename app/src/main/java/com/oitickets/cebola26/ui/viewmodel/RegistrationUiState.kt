@@ -9,14 +9,14 @@ sealed class RegistrationUiState {
     object StepData : RegistrationUiState()
     object StepPhoto : RegistrationUiState()
 
-    // --- Estados Auxiliares / Legado ---
-    // Necessários pois o ViewModel ainda referencia eles para ações específicas
-    object Camera : RegistrationUiState()     // Usado ao clicar em "Tirar Outra" ou reiniciar câmera
-    object QrScanner : RegistrationUiState()  // Usado para o scanner tela cheia
-    object Form : RegistrationUiState()       // Fallback de segurança
+    object Camera : RegistrationUiState()
+    object QrScanner : RegistrationUiState()
+    object Form : RegistrationUiState()
 
-    // --- Feedback ---
+
     object Uploading : RegistrationUiState()
     object Success : RegistrationUiState()
+
+    object PendingUploads : RegistrationUiState()
     data class Error(val message: String) : RegistrationUiState()
 }

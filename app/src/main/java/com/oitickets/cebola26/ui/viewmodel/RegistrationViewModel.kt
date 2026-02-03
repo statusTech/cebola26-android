@@ -4,11 +4,14 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
 import com.oitickets.cebola26.data.model.Participant
 import com.oitickets.cebola26.data.model.RegistrationRules
 import com.oitickets.cebola26.data.model.Staff
@@ -31,6 +34,20 @@ class RegistrationViewModel(
     private val prefs: SharedPreferences
 ) : ViewModel() {
 
+    // --- Estados de Upload Offline ---
+    var pendingUploadsCount by mutableIntStateOf(0)
+        private set
+
+    // Observador para o WorkManager
+    private val uploadsObserver = Observer<List<WorkInfo>> { workInfos ->
+        val pending = workInfos.count {
+            it.state == WorkInfo.State.ENQUEUED ||
+                    it.state == WorkInfo.State.RUNNING ||
+                    it.state == WorkInfo.State.BLOCKED
+        }
+        pendingUploadsCount = pending
+    }
+
     // --- Estados de Login ---
     var staffName by mutableStateOf("")
     var staffPassword by mutableStateOf("")
@@ -50,14 +67,15 @@ class RegistrationViewModel(
     var cpfFieldError by mutableStateOf<String?>(null)
     var qrCodeFieldError by mutableStateOf<String?>(null)
 
-    // --- Controle de UI ---
+    // --- UI QR ---
     var isQrManualMode by mutableStateOf(false)
-    var isCheckingCpf by mutableStateOf(false)
 
     // --- Câmera ---
     var capturedBitmap by mutableStateOf<Bitmap?>(null)
     var isFaceGood by mutableStateOf(false)
     var cameraFeedback by mutableStateOf("Posicione o rosto")
+
+    // --- Liveness ---
     var currentLivenessAction by mutableStateOf(LivenessAction.NONE)
 
     // --- UI State ---
@@ -66,11 +84,33 @@ class RegistrationViewModel(
 
     init {
         checkSession()
+        try {
+            repository.getPendingUploadsInfo().observeForever(uploadsObserver)
+        } catch (e: Exception) { }
     }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            repository.getPendingUploadsInfo().removeObserver(uploadsObserver)
+        } catch (e: Exception) { }
+    }
+
+    // --- NAVEGAÇÃO EXTRA ---
+    fun openPendingUploads() {
+        _uiState.value = RegistrationUiState.PendingUploads
+    }
+
+    fun closePendingUploads() {
+        _uiState.value = RegistrationUiState.StepQr
+    }
+
+    // --- SESSÃO E LOGIN ---
 
     private fun checkSession() {
         val savedId = prefs.getString("staff_id", null)
         val savedName = prefs.getString("staff_name", null)
+
         if (savedId != null && savedName != null) {
             currentStaffId = savedId
             currentStaffName = savedName
@@ -85,7 +125,6 @@ class RegistrationViewModel(
         }
     }
 
-    // --- NAVEGAÇÃO ---
     fun navigateBack() {
         val currentState = _uiState.value
         when (currentState) {
@@ -93,6 +132,7 @@ class RegistrationViewModel(
             is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
             is RegistrationUiState.Camera -> cancelCamera()
             is RegistrationUiState.QrScanner -> cancelCamera()
+            is RegistrationUiState.PendingUploads -> _uiState.value = RegistrationUiState.StepQr
             else -> { }
         }
     }
@@ -100,14 +140,12 @@ class RegistrationViewModel(
     fun performLogin() {
         if (staffName.isBlank()) { loginError = "Preencha seu nome."; return }
         if (staffPassword != "Cebol@26") { loginError = "Senha incorreta."; return }
-
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val loginTime = getUtcTimestamp()
                 val existingStaff = repository.findStaffByName(staffName)
                 val staffId = existingStaff?.id ?: UUID.randomUUID().toString()
                 val staff = Staff(id = staffId, name = staffName, lastLogin = loginTime)
-
                 if (repository.saveStaffLogin(staff).isSuccess) {
                     currentStaffId = staffId
                     currentStaffName = staffName
@@ -116,9 +154,7 @@ class RegistrationViewModel(
                     staffPassword = ""
                     _uiState.value = RegistrationUiState.StepQr
                     fetchRules()
-                } else {
-                    loginError = "Erro de conexão."
-                }
+                } else { loginError = "Erro de conexão." }
             } catch (e: Exception) { loginError = "Erro: ${e.message}" }
         }
     }
@@ -132,10 +168,7 @@ class RegistrationViewModel(
         _uiState.value = RegistrationUiState.Login
     }
 
-    // --- FLUXO PASSO A PASSO ---
-
     fun onStartQrScanner() { _uiState.value = RegistrationUiState.QrScanner }
-
     fun onQrCodeScanned(code: String) {
         qrCode = code
         val isNumeric = code.all { it.isDigit() }
@@ -149,32 +182,18 @@ class RegistrationViewModel(
             _uiState.value = RegistrationUiState.StepQr
         }
     }
-
-    fun updateQrCode(input: String) {
-        qrCode = input
-        if (qrCodeFieldError != null) qrCodeFieldError = null
-    }
-
+    fun updateQrCode(input: String) { qrCode = input; if (qrCodeFieldError != null) qrCodeFieldError = null }
     fun toggleQrManualMode() { isQrManualMode = !isQrManualMode }
-
     fun goToDataStep() {
-        if (rules.requireQrCode) {
-            if (qrCode.isBlank()) { qrCodeFieldError = "QR Code é obrigatório"; return }
-            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) { qrCodeFieldError = "QR Code Inválido"; return }
-        }
+        if (qrCode.isNotBlank()) {
+            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) { qrCodeFieldError = "Inválido"; return }
+        } else if (rules.requireQrCode) { qrCodeFieldError = "Obrigatório"; return }
         _uiState.value = RegistrationUiState.StepData
     }
-
     fun updateCpf(input: String) {
-        if (input.length <= 11) {
-            cpf = input.filter { it.isDigit() }
-            if (cpfFieldError != null) cpfFieldError = null
-        }
+        if (input.length <= 11) { cpf = input.filter { it.isDigit() }; if (cpfFieldError != null) cpfFieldError = null }
     }
-
-    // --- AQUI ESTÁ A MUDANÇA PRINCIPAL ---
     fun goToPhotoStep() {
-        // 1. Validações Locais
         if (rules.requireName && name.isBlank()) return
 
         if (rules.requireCpf) {
@@ -185,28 +204,18 @@ class RegistrationViewModel(
         val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
 
         if (shouldCheckCpf) {
-            isCheckingCpf = true
-
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    val exists = repository.checkCpfExists(cpf)
-                    if (exists) {
-                        cpfFieldError = "Este CPF já está cadastrado."
-                    } else {
-                        onStartCamera()
-                    }
-                } catch (e: Exception) {
+            viewModelScope.launch {
+                val exists = repository.checkCpfExists(cpf)
+                if (exists) {
+                    cpfFieldError = "CPF já cadastrado"
+                } else {
                     onStartCamera()
-                } finally {
-                    isCheckingCpf = false
                 }
             }
         } else {
-            // Se não precisa checar CPF, avança direto
             onStartCamera()
         }
     }
-
     fun onStartCamera() {
         currentLivenessAction = LivenessAction.BLINK
         isFaceGood = false
@@ -214,33 +223,27 @@ class RegistrationViewModel(
         capturedBitmap = null
         _uiState.value = RegistrationUiState.Camera
     }
-
     fun cancelCamera() {
-        if (_uiState.value is RegistrationUiState.Camera) {
-            _uiState.value = RegistrationUiState.StepPhoto
-        } else if (_uiState.value is RegistrationUiState.QrScanner) {
-            _uiState.value = RegistrationUiState.StepQr
-        }
+        if (_uiState.value is RegistrationUiState.Camera) _uiState.value = RegistrationUiState.StepPhoto
+        else if (_uiState.value is RegistrationUiState.QrScanner) _uiState.value = RegistrationUiState.StepQr
+        else if (_uiState.value is RegistrationUiState.StepPhoto) _uiState.value = RegistrationUiState.StepData
     }
+    fun onPhotoCaptured(bitmap: Bitmap) { capturedBitmap = bitmap; _uiState.value = RegistrationUiState.StepPhoto }
+    fun retakePhoto() { capturedBitmap = null; onStartCamera() }
 
-    fun onPhotoCaptured(bitmap: Bitmap) {
-        capturedBitmap = bitmap
-        _uiState.value = RegistrationUiState.StepPhoto
-    }
-
-    fun retakePhoto() {
-        capturedBitmap = null
-        onStartCamera()
-    }
+    // --- FINALIZAR CADASTRO ---
 
     fun submitRegistration() {
         if (rules.requirePhoto && capturedBitmap == null) return
+
+        // Revalidação por segurança
+        if (qrCode.isNotBlank() && (!qrCode.all { it.isDigit() } || qrCode.length != 12)) return
+        else if (rules.requireQrCode && qrCode.isBlank()) return
 
         _uiState.value = RegistrationUiState.Uploading
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Dupla checagem de CPF (segurança extra)
                 val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
                 if (shouldCheckCpf && repository.checkCpfExists(cpf)) {
                     cpfFieldError = "CPF já cadastrado."
@@ -260,18 +263,18 @@ class RegistrationViewModel(
 
                     if (result.isSuccess) {
                         _uiState.value = RegistrationUiState.Success
-                        delay(1500)
+                        delay(1000)
                         resetNewFlow()
                         fetchRules()
                     } else {
                         _uiState.value = RegistrationUiState.Error("Falha ao salvar dados.")
-                        delay(3000)
+                        delay(1500)
                         _uiState.value = RegistrationUiState.StepPhoto
                     }
                 }
             } catch (e: Exception) {
                 _uiState.value = RegistrationUiState.Error("Erro: ${e.message}")
-                delay(3000)
+                delay(1500)
                 _uiState.value = RegistrationUiState.StepPhoto
             }
         }

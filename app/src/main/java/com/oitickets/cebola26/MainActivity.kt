@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (!isGranted) {
-            Toast.makeText(this, "O aplicativo precisa da câmera.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "O aplicativo precisa da câmera para funcionar.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -36,7 +36,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+
         val prefs = getSharedPreferences("cebola_prefs", Context.MODE_PRIVATE)
+        // Passa o applicationContext para a Factory (necessário para o WorkManager no Repository)
         val viewModel: RegistrationViewModel by viewModels {
             RegistrationViewModelFactory(prefs, applicationContext)
         }
@@ -48,18 +50,22 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     topBar = {
                         // Lógica de visibilidade da Barra Superior
+                        // Esconde no Login, Sucesso, Câmera e Scanner para foco total
                         val showTopBar = uiState !is RegistrationUiState.Login &&
                                 uiState !is RegistrationUiState.Success &&
                                 uiState !is RegistrationUiState.Camera &&
                                 uiState !is RegistrationUiState.QrScanner
 
-                        // Lógica do botão Voltar (Aparece no StepData e StepPhoto)
+                        // Mostra botão de voltar nas etapas intermediárias ou na tela de uploads
                         val showBackButton = uiState is RegistrationUiState.StepData ||
-                                uiState is RegistrationUiState.StepPhoto
+                                uiState is RegistrationUiState.StepPhoto ||
+                                uiState is RegistrationUiState.PendingUploads
 
                         if (showTopBar) {
                             AppTopBar(
-                                onBackClick = if (showBackButton) { { viewModel.navigateBack() } } else null
+                                onBackClick = if (showBackButton) { { viewModel.navigateBack() } } else null,
+                                pendingUploadsCount = viewModel.pendingUploadsCount,
+                                onUploadsClick = { viewModel.openPendingUploads() }
                             )
                         }
                     }
@@ -69,33 +75,36 @@ class MainActivity : ComponentActivity() {
                         when (val state = uiState) {
                             is RegistrationUiState.Login -> LoginScreen(viewModel)
 
+                            // Fluxo de Cadastro
                             is RegistrationUiState.StepQr -> QrStepScreen(viewModel)
-
                             is RegistrationUiState.StepData -> DataStepScreen(viewModel)
-
                             is RegistrationUiState.StepPhoto -> CameraScreen(
                                 viewModel = viewModel,
                                 onPhotoTaken = { viewModel.onPhotoCaptured(it) },
                                 onCancel = { viewModel.cancelCamera() }
                             )
 
-                            // Estados Auxiliares
+                            // Estados de Câmera/Scanner
                             is RegistrationUiState.Camera -> CameraScreen(
                                 viewModel = viewModel,
                                 onPhotoTaken = { viewModel.onPhotoCaptured(it) },
                                 onCancel = { viewModel.cancelCamera() }
                             )
-
                             is RegistrationUiState.QrScanner -> QrScannerScreen(
                                 onCodeScanned = { viewModel.onQrCodeScanned(it) },
                                 onCancel = { viewModel.cancelCamera() }
                             )
 
+                            // Nova Tela de Uploads Offline
+                            is RegistrationUiState.PendingUploads -> PendingUploadsScreen(viewModel)
+
+                            // Feedback
                             is RegistrationUiState.Uploading -> LoadingScreen()
                             is RegistrationUiState.Success -> SuccessScreen()
                             is RegistrationUiState.Error -> ErrorScreen(message = state.message)
 
-                            else -> {}
+                            // Fallback
+                            is RegistrationUiState.Form -> QrStepScreen(viewModel)
                         }
                     }
                 }

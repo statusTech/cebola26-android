@@ -2,85 +2,68 @@ package com.oitickets.cebola26.data.repository
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.lifecycle.LiveData
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.storage.FirebaseStorage
 import com.google.gson.Gson
 import com.oitickets.cebola26.data.model.Participant
 import com.oitickets.cebola26.data.model.RegistrationRules
 import com.oitickets.cebola26.data.model.Staff
 import com.oitickets.cebola26.data.worker.UploadWorker
 import kotlinx.coroutines.tasks.await
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
 class RegistrationRepository(private val context: Context) {
     private val db = FirebaseFirestore.getInstance()
     private val gson = Gson()
+    private val workManager = WorkManager.getInstance(context) // Instância do WorkManager
 
+    // --- MONITORIZAÇÃO OFFLINE ---
+
+    // Retorna LiveData para observar o status dos uploads em tempo real na tela de Pendências
+    fun getPendingUploadsInfo(): LiveData<List<WorkInfo>> {
+        return workManager.getWorkInfosByTagLiveData("upload_participant")
+    }
 
     // --- REGRAS DE NEGÓCIO (FEATURE FLAGS) ---
-
     suspend fun getRegistrationRules(staffId: String?): RegistrationRules {
         return try {
             if (staffId != null) {
                 val staffDoc = db.collection("staff_config").document(staffId).get().await()
-                if (staffDoc.exists()) {
-                    return staffDoc.toObject(RegistrationRules::class.java) ?: RegistrationRules()
-                }
+                if (staffDoc.exists()) return staffDoc.toObject(RegistrationRules::class.java) ?: RegistrationRules()
             }
-
             val globalDoc = db.collection("app_config").document("registration_rules").get().await()
-            if (globalDoc.exists()) {
-                globalDoc.toObject(RegistrationRules::class.java) ?: RegistrationRules()
-            } else {
-                RegistrationRules()
-            }
+            if (globalDoc.exists()) globalDoc.toObject(RegistrationRules::class.java) ?: RegistrationRules() else RegistrationRules()
         } catch (e: Exception) {
-            e.printStackTrace()
+            // Em caso de erro (sem internet), retorna o padrão para não bloquear o app
             RegistrationRules()
         }
     }
 
     // --- STAFF ---
-
-    // NOVO: Busca staff pelo nome para evitar duplicidade
     suspend fun findStaffByName(name: String): Staff? {
         return try {
-            val snapshot = db.collection("staff")
-                .whereEqualTo("name", name)
-                .limit(1)
-                .get()
-                .await()
-
-            if (!snapshot.isEmpty) {
-                snapshot.documents[0].toObject(Staff::class.java)
-            } else {
-                null
-            }
+            val snapshot = db.collection("staff").whereEqualTo("name", name).limit(1).get().await()
+            if (!snapshot.isEmpty) snapshot.documents[0].toObject(Staff::class.java) else null
         } catch (e: Exception) {
-            e.printStackTrace()
             null
         }
     }
 
     suspend fun saveStaffLogin(staff: Staff): Result<Unit> {
         return try {
-            // Usa .set com merge para atualizar apenas o lastLogin se o doc já existir,
-            // ou criar tudo se for novo.
-            db.collection("staff")
-                .document(staff.id)
-                .set(staff)
-                .await()
+            db.collection("staff").document(staff.id).set(staff).await()
             Result.success(Unit)
         } catch (e: Exception) {
-            e.printStackTrace()
-            Result.failure(e)
+            // Se falhar login (offline), permitimos o acesso se a lógica local validar,
+            // ou simplesmente retornamos sucesso para não travar o fluxo em campo.
+            Result.success(Unit)
         }
     }
 
@@ -88,18 +71,19 @@ class RegistrationRepository(private val context: Context) {
 
     suspend fun checkCpfExists(cpf: String): Boolean {
         return try {
-            val snapshot = db.collection("participants")
-                .whereEqualTo("cpf", cpf)
-                .limit(1)
-                .get()
-                .await()
+            val snapshot = db.collection("participants").whereEqualTo("cpf", cpf).limit(1).get().await()
             !snapshot.isEmpty
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            false // Se offline, permite passar. O backend tratará duplicatas depois.
         }
     }
 
+    /**
+     * SALVAR PARTICIPANTE (OFFLINE-FIRST)
+     * 1. Salva a foto num ficheiro local temporário.
+     * 2. Agenda um Worker para fazer o upload e salvar no Firestore quando houver rede.
+     * 3. Retorna sucesso imediato para a UI.
+     */
     suspend fun saveParticipant(participant: Participant, photoBitmap: Bitmap?): Result<Unit> {
         return try {
             var localImagePath = ""
@@ -128,10 +112,10 @@ class RegistrationRepository(private val context: Context) {
             val uploadWork = OneTimeWorkRequestBuilder<UploadWorker>()
                 .setConstraints(constraints)
                 .setInputData(inputData)
+                .addTag("upload_participant")
                 .build()
 
-            WorkManager.getInstance(context).enqueue(uploadWork)
-
+            workManager.enqueue(uploadWork)
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
