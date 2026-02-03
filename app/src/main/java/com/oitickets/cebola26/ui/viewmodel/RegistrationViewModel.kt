@@ -27,7 +27,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
-import kotlin.random.Random
 
 class RegistrationViewModel(
     private val repository: RegistrationRepository,
@@ -38,7 +37,6 @@ class RegistrationViewModel(
     var pendingUploadsCount by mutableIntStateOf(0)
         private set
 
-    // Observador para o WorkManager
     private val uploadsObserver = Observer<List<WorkInfo>> { workInfos ->
         val pending = workInfos.count {
             it.state == WorkInfo.State.ENQUEUED ||
@@ -64,11 +62,9 @@ class RegistrationViewModel(
     var name by mutableStateOf("")
     var cpf by mutableStateOf("")
     var qrCode by mutableStateOf("")
-    var cpfFieldError by mutableStateOf<String?>(null)
-    var qrCodeFieldError by mutableStateOf<String?>(null)
 
-    // --- UI QR ---
-    var isQrManualMode by mutableStateOf(false)
+    // Erros (QR Code error removido pois está no outro VM)
+    var cpfFieldError by mutableStateOf<String?>(null)
 
     // --- Câmera ---
     var capturedBitmap by mutableStateOf<Bitmap?>(null)
@@ -95,8 +91,6 @@ class RegistrationViewModel(
             repository.getPendingUploadsInfo().removeObserver(uploadsObserver)
         } catch (e: Exception) { }
     }
-
-    // --- NAVEGAÇÃO EXTRA ---
     fun openPendingUploads() {
         _uiState.value = RegistrationUiState.PendingUploads
     }
@@ -104,8 +98,16 @@ class RegistrationViewModel(
     fun closePendingUploads() {
         _uiState.value = RegistrationUiState.StepQr
     }
-
-    // --- SESSÃO E LOGIN ---
+    fun navigateBack() {
+        val currentState = _uiState.value
+        when (currentState) {
+            is RegistrationUiState.StepData -> _uiState.value = RegistrationUiState.StepQr
+            is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
+            is RegistrationUiState.Camera -> cancelCamera()
+            is RegistrationUiState.PendingUploads -> _uiState.value = RegistrationUiState.StepQr
+            else -> { }
+        }
+    }
 
     private fun checkSession() {
         val savedId = prefs.getString("staff_id", null)
@@ -122,18 +124,6 @@ class RegistrationViewModel(
     private fun fetchRules() {
         viewModelScope.launch(Dispatchers.IO) {
             rules = repository.getRegistrationRules(currentStaffId)
-        }
-    }
-
-    fun navigateBack() {
-        val currentState = _uiState.value
-        when (currentState) {
-            is RegistrationUiState.StepData -> _uiState.value = RegistrationUiState.StepQr
-            is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
-            is RegistrationUiState.Camera -> cancelCamera()
-            is RegistrationUiState.QrScanner -> cancelCamera()
-            is RegistrationUiState.PendingUploads -> _uiState.value = RegistrationUiState.StepQr
-            else -> { }
         }
     }
 
@@ -167,32 +157,17 @@ class RegistrationViewModel(
         staffPassword = ""
         _uiState.value = RegistrationUiState.Login
     }
-
-    fun onStartQrScanner() { _uiState.value = RegistrationUiState.QrScanner }
-    fun onQrCodeScanned(code: String) {
-        qrCode = code
-        val isNumeric = code.all { it.isDigit() }
-        val isValidLength = code.length == 12
-        if (isNumeric && isValidLength) {
-            qrCodeFieldError = null
-            _uiState.value = RegistrationUiState.StepData
-        } else {
-            qrCodeFieldError = "QR Code Inválido"
-            isQrManualMode = true
-            _uiState.value = RegistrationUiState.StepQr
-        }
-    }
-    fun updateQrCode(input: String) { qrCode = input; if (qrCodeFieldError != null) qrCodeFieldError = null }
-    fun toggleQrManualMode() { isQrManualMode = !isQrManualMode }
-    fun goToDataStep() {
-        if (qrCode.isNotBlank()) {
-            if (!qrCode.all { it.isDigit() } || qrCode.length != 12) { qrCodeFieldError = "Inválido"; return }
-        } else if (rules.requireQrCode) { qrCodeFieldError = "Obrigatório"; return }
+    fun onQrStepCompleted(validQrCode: String) {
+        qrCode = validQrCode
         _uiState.value = RegistrationUiState.StepData
     }
     fun updateCpf(input: String) {
-        if (input.length <= 11) { cpf = input.filter { it.isDigit() }; if (cpfFieldError != null) cpfFieldError = null }
+        if (input.length <= 11) {
+            cpf = input.filter { it.isDigit() }
+            if (cpfFieldError != null) cpfFieldError = null
+        }
     }
+
     fun goToPhotoStep() {
         if (rules.requireName && name.isBlank()) return
 
@@ -223,11 +198,12 @@ class RegistrationViewModel(
         capturedBitmap = null
         _uiState.value = RegistrationUiState.Camera
     }
+
     fun cancelCamera() {
         if (_uiState.value is RegistrationUiState.Camera) _uiState.value = RegistrationUiState.StepPhoto
-        else if (_uiState.value is RegistrationUiState.QrScanner) _uiState.value = RegistrationUiState.StepQr
         else if (_uiState.value is RegistrationUiState.StepPhoto) _uiState.value = RegistrationUiState.StepData
     }
+
     fun onPhotoCaptured(bitmap: Bitmap) { capturedBitmap = bitmap; _uiState.value = RegistrationUiState.StepPhoto }
     fun retakePhoto() { capturedBitmap = null; onStartCamera() }
 
@@ -236,17 +212,17 @@ class RegistrationViewModel(
     fun submitRegistration() {
         if (rules.requirePhoto && capturedBitmap == null) return
 
-        // Revalidação por segurança
-        if (qrCode.isNotBlank() && (!qrCode.all { it.isDigit() } || qrCode.length != 12)) return
-        else if (rules.requireQrCode && qrCode.isBlank()) return
+        // Validação básica de segurança (a validação pesada já foi feita no passo 1)
+        if (rules.requireQrCode && qrCode.isBlank()) return
 
         _uiState.value = RegistrationUiState.Uploading
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // Dupla verificação no submit
                 val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
                 if (shouldCheckCpf && repository.checkCpfExists(cpf)) {
-                    cpfFieldError = "CPF já cadastrado."
+                    cpfFieldError = "Este CPF já está cadastrado."
                     _uiState.value = RegistrationUiState.StepData
                 } else {
                     val timestamp = getUtcTimestamp()
@@ -285,9 +261,7 @@ class RegistrationViewModel(
         cpf = ""
         qrCode = ""
         cpfFieldError = null
-        qrCodeFieldError = null
         capturedBitmap = null
-        isQrManualMode = false
         isFaceGood = false
         _uiState.value = RegistrationUiState.StepQr
     }

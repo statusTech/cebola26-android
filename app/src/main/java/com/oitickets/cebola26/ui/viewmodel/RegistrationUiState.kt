@@ -11,8 +11,6 @@ sealed class RegistrationUiState {
 
     object Camera : RegistrationUiState()
     object QrScanner : RegistrationUiState()
-    object Form : RegistrationUiState()
-
 
     object Uploading : RegistrationUiState()
     object Success : RegistrationUiState()

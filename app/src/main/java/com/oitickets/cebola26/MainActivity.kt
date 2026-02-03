@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import com.oitickets.cebola26.ui.components.AppTopBar
 import com.oitickets.cebola26.ui.screens.*
 import com.oitickets.cebola26.ui.theme.Cebola26Theme
+import com.oitickets.cebola26.ui.viewmodel.QrCodeViewModel
+import com.oitickets.cebola26.ui.viewmodel.QrCodeViewModelFactory
 import com.oitickets.cebola26.ui.viewmodel.RegistrationUiState
 import com.oitickets.cebola26.ui.viewmodel.RegistrationViewModel
 import com.oitickets.cebola26.ui.viewmodel.RegistrationViewModelFactory
@@ -42,6 +44,8 @@ class MainActivity : ComponentActivity() {
         val viewModel: RegistrationViewModel by viewModels {
             RegistrationViewModelFactory(prefs, applicationContext)
         }
+
+        val qrViewModel: QrCodeViewModel by viewModels { QrCodeViewModelFactory() }
 
         setContent {
             Cebola26Theme {
@@ -76,7 +80,6 @@ class MainActivity : ComponentActivity() {
                             is RegistrationUiState.Login -> LoginScreen(viewModel)
 
                             // Fluxo de Cadastro
-                            is RegistrationUiState.StepQr -> QrStepScreen(viewModel)
                             is RegistrationUiState.StepData -> DataStepScreen(viewModel)
                             is RegistrationUiState.StepPhoto -> CameraScreen(
                                 viewModel = viewModel,
@@ -90,10 +93,31 @@ class MainActivity : ComponentActivity() {
                                 onPhotoTaken = { viewModel.onPhotoCaptured(it) },
                                 onCancel = { viewModel.cancelCamera() }
                             )
-                            is RegistrationUiState.QrScanner -> QrScannerScreen(
-                                onCodeScanned = { viewModel.onQrCodeScanned(it) },
-                                onCancel = { viewModel.cancelCamera() }
-                            )
+
+                            is RegistrationUiState.QrScanner -> {
+                                QrScannerScreen(
+                                    onCodeScanned = { code ->
+                                        qrViewModel.onQrCodeScanned(code)
+                                        viewModel.navigateBack()
+                                    },
+                                    onCancel = {
+                                        qrViewModel.toggleQrManualMode()
+                                        viewModel.navigateBack()
+                                    }
+                                )
+                            }
+
+                            is RegistrationUiState.StepQr -> {
+                                QrStepScreen(
+                                    qrViewModel = qrViewModel,
+                                    rules = viewModel.rules,
+                                    initialQrCode = viewModel.qrCode,
+                                    onNext = { validCode ->
+
+                                        viewModel.onQrStepCompleted(validCode)
+                                    }
+                                )
+                            }
 
                             // Nova Tela de Uploads Offline
                             is RegistrationUiState.PendingUploads -> PendingUploadsScreen(viewModel)
@@ -103,8 +127,6 @@ class MainActivity : ComponentActivity() {
                             is RegistrationUiState.Success -> SuccessScreen()
                             is RegistrationUiState.Error -> ErrorScreen(message = state.message)
 
-                            // Fallback
-                            is RegistrationUiState.Form -> QrStepScreen(viewModel)
                         }
                     }
                 }

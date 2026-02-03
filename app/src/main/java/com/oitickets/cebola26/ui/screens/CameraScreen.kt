@@ -139,7 +139,7 @@ fun CameraScreen(
                         cameraProvider.unbindAll()
                         val cam = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            CameraSelector.DEFAULT_FRONT_CAMERA,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             imageCapture,
                             imageAnalysis
