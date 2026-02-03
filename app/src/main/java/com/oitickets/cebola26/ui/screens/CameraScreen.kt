@@ -27,12 +27,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect as ComposeRect
 import androidx.compose.ui.geometry.Size
@@ -75,6 +77,7 @@ fun CameraScreen(
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isFlashOn by remember { mutableStateOf(false) }
+    var isFrontCamera by remember { mutableStateOf(false) }
 
     val executor = remember { Executors.newSingleThreadExecutor() }
 
@@ -83,19 +86,91 @@ fun CameraScreen(
 
     val canSkip = !viewModel.rules.requirePhoto
 
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+
+    // Reinicializa a câmera quando isFrontCamera mudar
+    LaunchedEffect(isFrontCamera) {
+        cameraProvider?.let { provider ->
+            provider.unbindAll()
+            previewView?.let { pv ->
+                val preview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(pv.surfaceProvider)
+                }
+
+                imageCapture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .build()
+
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also { analysis ->
+                        analysis.setAnalyzer(executor, FaceQualityAnalyzer(
+                            targetAction = viewModel.currentLivenessAction,
+                            onQualityUpdate = { isGood, msg ->
+                                if (!isProcessing) {
+                                    if (msg.contains("Nenhum rosto", ignoreCase = true) ||
+                                        msg.contains("Centralize", ignoreCase = true) ||
+                                        msg.contains("Aproxime", ignoreCase = true)) {
+                                        isLivenessPassed = false
+                                    }
+
+                                    if (isLivenessPassed) {
+                                        viewModel.isFaceGood = true
+                                        viewModel.cameraFeedback = "PRONTO! PODE CAPTURAR"
+                                    } else {
+                                        viewModel.isFaceGood = isGood
+                                        viewModel.cameraFeedback = msg
+                                    }
+                                }
+                            },
+                            onActionCompleted = {
+                                if (!isLivenessPassed) {
+                                    isLivenessPassed = true
+                                    viewModel.isFaceGood = true
+                                    viewModel.cameraFeedback = "PRONTO! PODE CAPTURAR"
+                                }
+                            }
+                        ))
+                    }
+
+                try {
+                    val cameraSelector = if (isFrontCamera) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    }
+                    val cam = provider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview,
+                        imageCapture,
+                        imageAnalysis
+                    )
+                    camera = cam
+                } catch (e: Exception) {
+                    Log.e("CameraScreen", "Erro ao trocar câmera", e)
+                }
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                val previewView = PreviewView(ctx)
+                val pv = PreviewView(ctx)
+                previewView = pv
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
                 cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
+                    val provider = cameraProviderFuture.get()
+                    cameraProvider = provider
 
                     val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
+                        it.setSurfaceProvider(pv.surfaceProvider)
                     }
 
                     imageCapture = ImageCapture.Builder()
@@ -136,10 +211,15 @@ fun CameraScreen(
                         }
 
                     try {
-                        cameraProvider.unbindAll()
-                        val cam = cameraProvider.bindToLifecycle(
+                        provider.unbindAll()
+                        val cameraSelector = if (isFrontCamera) {
+                            CameraSelector.DEFAULT_FRONT_CAMERA
+                        } else {
+                            CameraSelector.DEFAULT_BACK_CAMERA
+                        }
+                        val cam = provider.bindToLifecycle(
                             lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            cameraSelector,
                             preview,
                             imageCapture,
                             imageAnalysis
@@ -150,7 +230,7 @@ fun CameraScreen(
                     }
                 }, ContextCompat.getMainExecutor(ctx))
 
-                previewView
+                pv
             }
         )
 
@@ -166,20 +246,41 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = {
-                        if (camera?.cameraInfo?.hasFlashUnit() == true) {
-                            isFlashOn = !isFlashOn
-                            camera?.cameraControl?.enableTorch(isFlashOn)
-                        }
-                    },
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                        contentDescription = "Flash",
-                        tint = if (isFlashOn) Color(0xFFFFCA28) else Color.White
-                    )
+                    IconButton(
+                        onClick = {
+                            isFrontCamera = !isFrontCamera
+                            isFlashOn = false // Desliga flash ao trocar câmera
+                        },
+                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FlipCameraAndroid,
+                            contentDescription = if (isFrontCamera) "Trocar para Câmera Traseira" else "Trocar para Câmera Frontal",
+                            tint = Color.White
+                        )
+                    }
+                    
+                    IconButton(
+                        onClick = {
+                            if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                                isFlashOn = !isFlashOn
+                                camera?.cameraControl?.enableTorch(isFlashOn)
+                            }
+                        },
+                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp),
+                        enabled = !isFrontCamera // Flash só funciona na câmera traseira
+                    ) {
+                        Icon(
+                            imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = "Flash",
+                            tint = if (isFlashOn) Color(0xFFFFCA28) else Color.White,
+                            modifier = Modifier.alpha(if (isFrontCamera) 0.5f else 1f)
+                        )
+                    }
                 }
 
                 val statusColor by animateColorAsState(
