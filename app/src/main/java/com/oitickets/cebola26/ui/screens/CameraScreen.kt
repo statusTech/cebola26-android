@@ -8,7 +8,13 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
-import androidx.camera.core.*
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.animateColorAsState
@@ -18,7 +24,17 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,19 +43,35 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect as ComposeRect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -57,6 +89,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
+import androidx.compose.ui.geometry.Rect as ComposeRect
 
 @Composable
 fun CameraScreen(
@@ -64,113 +97,31 @@ fun CameraScreen(
     onPhotoTaken: (Bitmap) -> Unit,
     onCancel: () -> Unit
 ) {
-    // 1. SE JÁ TEM FOTO, MOSTRA A TELA DE REVISÃO
     if (viewModel.capturedBitmap != null) {
         PhotoPreviewScreen(viewModel)
         return
     }
 
-    // 2. SE NÃO TEM FOTO, MOSTRA A CÂMERA COM LIVENESS
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isFlashOn by remember { mutableStateOf(false) }
-    var isFrontCamera by remember { mutableStateOf(false) }
-
     val executor = remember { Executors.newSingleThreadExecutor() }
-
     var isProcessing by remember { mutableStateOf(false) }
     var isLivenessPassed by remember { mutableStateOf(false) }
-
     val canSkip = !viewModel.rules.requirePhoto
 
-    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
-    var previewView by remember { mutableStateOf<PreviewView?>(null) }
-
-    // Reinicializa a câmera quando isFrontCamera mudar
-    LaunchedEffect(isFrontCamera) {
-        cameraProvider?.let { provider ->
-            provider.unbindAll()
-            previewView?.let { pv ->
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(pv.surfaceProvider)
-                }
-
-                imageCapture = ImageCapture.Builder()
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                    .build()
-
-                val imageAnalysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                    .also { analysis ->
-                        analysis.setAnalyzer(executor, FaceQualityAnalyzer(
-                            targetAction = viewModel.currentLivenessAction,
-                            onQualityUpdate = { isGood, msg ->
-                                if (!isProcessing) {
-                                    if (msg.contains("Nenhum rosto", ignoreCase = true) ||
-                                        msg.contains("Centralize", ignoreCase = true) ||
-                                        msg.contains("Aproxime", ignoreCase = true)) {
-                                        isLivenessPassed = false
-                                    }
-
-                                    if (isLivenessPassed) {
-                                        viewModel.isFaceGood = true
-                                        viewModel.cameraFeedback = "PRONTO! PODE CAPTURAR"
-                                    } else {
-                                        viewModel.isFaceGood = isGood
-                                        viewModel.cameraFeedback = msg
-                                    }
-                                }
-                            },
-                            onActionCompleted = {
-                                if (!isLivenessPassed) {
-                                    isLivenessPassed = true
-                                    viewModel.isFaceGood = true
-                                    viewModel.cameraFeedback = "PRONTO! PODE CAPTURAR"
-                                }
-                            }
-                        ))
-                    }
-
-                try {
-                    val cameraSelector = if (isFrontCamera) {
-                        CameraSelector.DEFAULT_FRONT_CAMERA
-                    } else {
-                        CameraSelector.DEFAULT_BACK_CAMERA
-                    }
-                    val cam = provider.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        preview,
-                        imageCapture,
-                        imageAnalysis
-                    )
-                    camera = cam
-                } catch (e: Exception) {
-                    Log.e("CameraScreen", "Erro ao trocar câmera", e)
-                }
-            }
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                val pv = PreviewView(ctx)
-                previewView = pv
+                val previewView = PreviewView(ctx)
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-
                 cameraProviderFuture.addListener({
-                    val provider = cameraProviderFuture.get()
-                    cameraProvider = provider
-
+                    val cameraProvider = cameraProviderFuture.get()
                     val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(pv.surfaceProvider)
+                        it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
                     imageCapture = ImageCapture.Builder()
@@ -190,7 +141,6 @@ fun CameraScreen(
                                             msg.contains("Aproxime", ignoreCase = true)) {
                                             isLivenessPassed = false
                                         }
-
                                         if (isLivenessPassed) {
                                             viewModel.isFaceGood = true
                                             viewModel.cameraFeedback = "PRONTO! PODE CAPTURAR"
@@ -209,34 +159,26 @@ fun CameraScreen(
                                 }
                             ))
                         }
-
                     try {
-                        provider.unbindAll()
-                        val cameraSelector = if (isFrontCamera) {
-                            CameraSelector.DEFAULT_FRONT_CAMERA
-                        } else {
-                            CameraSelector.DEFAULT_BACK_CAMERA
-                        }
-                        val cam = provider.bindToLifecycle(
+                        cameraProvider.unbindAll()
+                        val cam = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            cameraSelector,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             imageCapture,
                             imageAnalysis
+
                         )
                         camera = cam
                     } catch (e: Exception) {
                         Log.e("CameraScreen", "Erro ao iniciar câmera", e)
                     }
                 }, ContextCompat.getMainExecutor(ctx))
-
-                pv
+                previewView
             }
         )
 
         CameraOverlay(isFaceGood = viewModel.isFaceGood)
-
-        // Header com Controles
         if (!isProcessing) {
             Row(
                 modifier = Modifier
@@ -246,47 +188,24 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                IconButton(
+                    onClick = {
+                        if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                            isFlashOn = !isFlashOn
+                            camera?.cameraControl?.enableTorch(isFlashOn)
+                        }
+                    },
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
                 ) {
-                    IconButton(
-                        onClick = {
-                            isFrontCamera = !isFrontCamera
-                            isFlashOn = false // Desliga flash ao trocar câmera
-                        },
-                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FlipCameraAndroid,
-                            contentDescription = if (isFrontCamera) "Trocar para Câmera Traseira" else "Trocar para Câmera Frontal",
-                            tint = Color.White
-                        )
-                    }
-                    
-                    IconButton(
-                        onClick = {
-                            if (camera?.cameraInfo?.hasFlashUnit() == true) {
-                                isFlashOn = !isFlashOn
-                                camera?.cameraControl?.enableTorch(isFlashOn)
-                            }
-                        },
-                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp),
-                        enabled = !isFrontCamera // Flash só funciona na câmera traseira
-                    ) {
-                        Icon(
-                            imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                            contentDescription = "Flash",
-                            tint = if (isFlashOn) Color(0xFFFFCA28) else Color.White,
-                            modifier = Modifier.alpha(if (isFrontCamera) 0.5f else 1f)
-                        )
-                    }
+                    Icon(
+                        imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                        contentDescription = "Flash",
+                        tint = if (isFlashOn) Color(0xFFFFCA28) else Color.White
+                    )
                 }
-
                 val statusColor by animateColorAsState(
                     if (viewModel.isFaceGood) Color(0xFF2E7D32) else Color(0xFFB00020), label = "color"
                 )
-
                 Surface(
                     color = statusColor.copy(alpha = 0.9f),
                     shape = RoundedCornerShape(50),
@@ -311,7 +230,6 @@ fun CameraScreen(
                         )
                     }
                 }
-
                 IconButton(
                     onClick = onCancel,
                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).size(40.dp)
@@ -320,8 +238,6 @@ fun CameraScreen(
                 }
             }
         }
-
-        // Rodapé
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -394,7 +310,6 @@ fun CameraScreen(
                                 }
                             }
                     )
-
                     Spacer(modifier = Modifier.width(60.dp))
                 }
             }
@@ -442,7 +357,6 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("REFAZER", fontSize = 12.sp, maxLines = 1)
                 }
-
                 Button(
                     onClick = { viewModel.submitRegistration() },
                     shape = RoundedCornerShape(12.dp),
@@ -463,13 +377,11 @@ fun CameraOverlay(isFaceGood: Boolean) {
     val borderColor by animateColorAsState(
         if (isFaceGood) Color(0xFF00E676) else Color(0xFFFFFFFF), label = "border"
     )
-
     Canvas(modifier = Modifier.fillMaxSize()) {
         val ovalWidth = size.width * 0.65f
         val ovalHeight = size.height * 0.45f
         val ovalLeft = (size.width - ovalWidth) / 2
         val ovalTop = (size.height - ovalHeight) / 2 * 0.8f
-
         val path = Path().apply {
             addRect(ComposeRect(0f, 0f, size.width, size.height))
             val ovalPath = Path().apply {
@@ -477,20 +389,16 @@ fun CameraOverlay(isFaceGood: Boolean) {
             }
             op(this, ovalPath, PathOperation.Difference)
         }
-
         drawPath(path = path, color = Color.Black.copy(alpha = 0.7f))
-
         drawOval(
             color = borderColor.copy(alpha = 0.8f),
             topLeft = Offset(ovalLeft, ovalTop),
             size = Size(ovalWidth, ovalHeight),
             style = Stroke(width = 4.dp.toPx())
         )
-
-        // Cantoneiras Tech
+// Cantoneiras Tech
         val cornerLength = 40.dp.toPx()
         val stroke = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
-
         drawLine(borderColor, Offset(ovalLeft - 20, ovalTop), Offset(ovalLeft - 20 + cornerLength, ovalTop), strokeWidth = 6f)
         drawLine(borderColor, Offset(ovalLeft - 20, ovalTop), Offset(ovalLeft - 20, ovalTop + cornerLength), strokeWidth = 6f)
         drawLine(borderColor, Offset(ovalLeft + ovalWidth + 20, ovalTop), Offset(ovalLeft + ovalWidth + 20 - cornerLength, ovalTop), strokeWidth = 6f)
@@ -499,10 +407,10 @@ fun CameraOverlay(isFaceGood: Boolean) {
         drawLine(borderColor, Offset(ovalLeft - 20, ovalTop + ovalHeight), Offset(ovalLeft - 20, ovalTop + ovalHeight - cornerLength), strokeWidth = 6f)
         drawLine(borderColor, Offset(ovalLeft + ovalWidth + 20, ovalTop + ovalHeight), Offset(ovalLeft + ovalWidth + 20 - cornerLength, ovalTop + ovalHeight), strokeWidth = 6f)
         drawLine(borderColor, Offset(ovalLeft + ovalWidth + 20, ovalTop + ovalHeight), Offset(ovalLeft + ovalWidth + 20, ovalTop + ovalHeight - cornerLength), strokeWidth = 6f)
+
     }
 }
 
-// --- Lógica de Captura e Validação Final ---
 fun captureAndCrop(
     context: Context,
     imageCapture: ImageCapture?,
@@ -511,16 +419,14 @@ fun captureAndCrop(
     onError: (String) -> Unit
 ) {
     val imgCap = imageCapture ?: run { onError("Câmera não inicializada"); return }
-
     imgCap.takePicture(
         executor,
         object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(imageProxy: ImageProxy) {
+
                 try {
                     val originalBitmap = imageProxyToBitmap(imageProxy)
                     imageProxy.close()
-
-                    // Revalidação na imagem capturada (ALTA PRECISÃO)
                     val detector = FaceDetection.getClient(
                         FaceDetectorOptions.Builder()
                             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
@@ -528,33 +434,24 @@ fun captureAndCrop(
                             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                             .build()
                     )
-
                     val image = InputImage.fromBitmap(originalBitmap, 0)
-
                     detector.process(image)
                         .addOnSuccessListener(executor) { faces ->
                             if (faces.isNotEmpty()) {
-                                // Pega o maior rosto
                                 val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-
                                 val rotY = face.headEulerAngleY
                                 val rotZ = face.headEulerAngleZ
 
-                                // 1. Validação de Rotação (Tolerância de 15 graus na foto final)
                                 if (abs(rotY) > 15 || abs(rotZ) > 15) {
                                     onError("Rosto virado na foto. Olhe para frente.")
                                     return@addOnSuccessListener
                                 }
-
-                                // 2. Validação de Olhos Abertos (NOVO)
                                 val leftEye = face.leftEyeOpenProbability ?: 0f
                                 val rightEye = face.rightEyeOpenProbability ?: 0f
-                                // Tolerância: 0.5 (50% de chance de estar aberto)
                                 if (leftEye < 0.5f || rightEye < 0.5f) {
                                     onError("Abra os olhos para a foto.")
                                     return@addOnSuccessListener
                                 }
-
                                 val croppedBitmap = cropBitmapToFace(originalBitmap, face.boundingBox)
                                 val optimizedBitmap = resizeBitmap(croppedBitmap, 800)
                                 onSuccess(optimizedBitmap)
@@ -562,6 +459,7 @@ fun captureAndCrop(
                                 onError("Nenhum rosto identificado na foto. Tente novamente.")
                             }
                         }
+
                         .addOnFailureListener(executor) {
                             onError("Erro ao processar rosto: ${it.message}")
                         }
@@ -582,29 +480,25 @@ fun imageProxyToBitmap(image: ImageProxy): Bitmap {
     val buffer = image.planes[0].buffer
     val bytes = ByteArray(buffer.remaining())
     buffer.get(bytes)
+
     val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     val matrix = Matrix()
     matrix.postRotate(image.imageInfo.rotationDegrees.toFloat())
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
-
 fun cropBitmapToFace(original: Bitmap, faceRect: Rect): Bitmap {
     val margin = 0.25f
     val widthMargin = (faceRect.width() * margin).toInt()
     val heightMargin = (faceRect.height() * margin).toInt()
-
     val x1 = max(0, faceRect.left - widthMargin)
     val y1 = max(0, faceRect.top - heightMargin)
     val x2 = kotlin.math.min(original.width, faceRect.right + widthMargin)
     val y2 = kotlin.math.min(original.height, faceRect.bottom + heightMargin)
-
     val newWidth = x2 - x1
     val newHeight = y2 - y1
-
     if (newWidth <= 0 || newHeight <= 0) return original
     return Bitmap.createBitmap(original, x1, y1, newWidth, newHeight)
 }
-
 fun resizeBitmap(source: Bitmap, maxLength: Int): Bitmap {
     try {
         if (source.width <= maxLength && source.height <= maxLength) return source

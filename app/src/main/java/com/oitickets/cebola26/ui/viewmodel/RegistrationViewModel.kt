@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,8 +64,10 @@ class RegistrationViewModel(
     var cpf by mutableStateOf("")
     var qrCode by mutableStateOf("")
 
-    // Erros (QR Code error removido pois está no outro VM)
     var cpfFieldError by mutableStateOf<String?>(null)
+
+    // Estado para controlar o loading do botão "Avançar"
+    var isCheckingCpf by mutableStateOf(false)
 
     // --- Câmera ---
     var capturedBitmap by mutableStateOf<Bitmap?>(null)
@@ -91,13 +94,11 @@ class RegistrationViewModel(
             repository.getPendingUploadsInfo().removeObserver(uploadsObserver)
         } catch (e: Exception) { }
     }
-    fun openPendingUploads() {
-        _uiState.value = RegistrationUiState.PendingUploads
-    }
 
-    fun closePendingUploads() {
-        _uiState.value = RegistrationUiState.StepQr
-    }
+    // ... (Métodos de navegação e login mantidos iguais) ...
+    fun openPendingUploads() { _uiState.value = RegistrationUiState.PendingUploads }
+    fun closePendingUploads() { _uiState.value = RegistrationUiState.StepQr }
+
     fun navigateBack() {
         val currentState = _uiState.value
         when (currentState) {
@@ -112,7 +113,6 @@ class RegistrationViewModel(
     private fun checkSession() {
         val savedId = prefs.getString("staff_id", null)
         val savedName = prefs.getString("staff_name", null)
-
         if (savedId != null && savedName != null) {
             currentStaffId = savedId
             currentStaffName = savedName
@@ -157,10 +157,12 @@ class RegistrationViewModel(
         staffPassword = ""
         _uiState.value = RegistrationUiState.Login
     }
+
     fun onQrStepCompleted(validQrCode: String) {
         qrCode = validQrCode
         _uiState.value = RegistrationUiState.StepData
     }
+
     fun updateCpf(input: String) {
         if (input.length <= 11) {
             cpf = input.filter { it.isDigit() }
@@ -169,6 +171,7 @@ class RegistrationViewModel(
     }
 
     fun goToPhotoStep() {
+        // 1. Validações Locais (Síncronas)
         if (rules.requireName && name.isBlank()) return
 
         if (rules.requireCpf) {
@@ -179,18 +182,31 @@ class RegistrationViewModel(
         val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
 
         if (shouldCheckCpf) {
+            isCheckingCpf = true // Ativa loading na UI
+
             viewModelScope.launch {
-                val exists = repository.checkCpfExists(cpf)
-                if (exists) {
-                    cpfFieldError = "CPF já cadastrado"
-                } else {
+                try {
+                    val exists = withTimeout(2500L) {
+                        repository.checkCpfExists(cpf)
+                    }
+
+                    if (exists) {
+                        cpfFieldError = "CPF já cadastrado"
+                    } else {
+                        onStartCamera()
+                    }
+                } catch (e: Exception) {
                     onStartCamera()
+                } finally {
+                    isCheckingCpf = false
                 }
             }
         } else {
             onStartCamera()
         }
     }
+
+    // ... (Restante do código igual: onStartCamera, cancelCamera, submitRegistration...) ...
     fun onStartCamera() {
         currentLivenessAction = LivenessAction.BLINK
         isFaceGood = false
@@ -207,22 +223,27 @@ class RegistrationViewModel(
     fun onPhotoCaptured(bitmap: Bitmap) { capturedBitmap = bitmap; _uiState.value = RegistrationUiState.StepPhoto }
     fun retakePhoto() { capturedBitmap = null; onStartCamera() }
 
-    // --- FINALIZAR CADASTRO ---
-
     fun submitRegistration() {
         if (rules.requirePhoto && capturedBitmap == null) return
-
-        // Validação básica de segurança (a validação pesada já foi feita no passo 1)
         if (rules.requireQrCode && qrCode.isBlank()) return
 
         _uiState.value = RegistrationUiState.Uploading
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Dupla verificação no submit
                 val shouldCheckCpf = rules.requireCpf || cpf.isNotEmpty()
-                if (shouldCheckCpf && repository.checkCpfExists(cpf)) {
-                    cpfFieldError = "Este CPF já está cadastrado."
+                var cpfExists = false
+
+                if (shouldCheckCpf) {
+                    try {
+                        cpfExists = withTimeout(3000L) { repository.checkCpfExists(cpf) }
+                    } catch (e: Exception) {
+                        // Ignora erro de rede no submit final para salvar offline
+                    }
+                }
+
+                if (cpfExists) {
+                    cpfFieldError = "CPF já cadastrado."
                     _uiState.value = RegistrationUiState.StepData
                 } else {
                     val timestamp = getUtcTimestamp()

@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -32,8 +33,10 @@ fun DataStepScreen(viewModel: RegistrationViewModel) {
 
     // Validação para habilitar botão
     val isNameValid = !rules.requireName || viewModel.name.isNotBlank()
-    val isCpfValid = !rules.requireCpf || (viewModel.cpf.length == 11) // Validação matemática pode ser no clique
-    val isNextEnabled = isNameValid && isCpfValid
+    val isCpfValid = !rules.requireCpf || (viewModel.cpf.length == 11)
+
+    // Desabilita o botão se estiver a validar o CPF (loading)
+    val isNextEnabled = isNameValid && isCpfValid && !viewModel.isCheckingCpf
 
     Column(
         modifier = Modifier
@@ -118,7 +121,17 @@ fun DataStepScreen(viewModel: RegistrationViewModel) {
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("AVANÇAR (2/3)", fontWeight = FontWeight.Bold)
+                    if (viewModel.isCheckingCpf) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("A VERIFICAR...", fontWeight = FontWeight.Bold)
+                    } else {
+                        Text("AVANÇAR (2/3)", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
