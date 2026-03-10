@@ -2,6 +2,7 @@ package com.oitickets.cebola26.data.worker
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.firestore.FirebaseFirestore
@@ -28,35 +29,46 @@ class UploadWorker(
 
         return try {
             var downloadUrl = ""
+            var file: File? = null
 
-            // 1. Se tiver caminho de imagem local, faz o upload
+            // 1. Se tiver caminho de imagem local, tenta fazer o upload
             if (!localImagePath.isNullOrBlank()) {
-                val file = File(localImagePath)
+                file = File(localImagePath)
+
                 if (file.exists()) {
                     val storageRef = storage.reference.child("faces/${participant.id}.jpg")
 
                     // Upload do arquivo local
                     storageRef.putFile(Uri.fromFile(file)).await()
-                    downloadUrl = storageRef.downloadUrl.await().toString()
 
-                    // Deleta o arquivo local para economizar espaço após subir
-                    file.delete()
+                    // Pega a URL pública
+                    downloadUrl = storageRef.downloadUrl.await().toString()
+                } else {
+                    try {
+                        val storageRef = storage.reference.child("faces/${participant.id}.jpg")
+                        downloadUrl = storageRef.downloadUrl.await().toString()
+                        Log.d("UploadWorker", "Arquivo local ausente, mas recuperado do Storage: $downloadUrl")
+                    } catch (e: Exception) {
+                        Log.w("UploadWorker", "Arquivo local perdido e não encontrado no Storage.")
+                    }
                 }
             }
 
-            // 2. Atualiza o objeto com a URL da nuvem (se houver) ou mantém vazia
+
             val finalParticipant = participant.copy(photoUrl = downloadUrl)
 
-            // 3. Salva no Firestore
             db.collection("participants")
                 .document(participant.id)
                 .set(finalParticipant)
                 .await()
 
+            if (file != null && file.exists()) {
+                file.delete()
+            }
+
             Result.success()
         } catch (e: Exception) {
             e.printStackTrace()
-            // Se der erro (ex: internet caiu no meio), o WorkManager tenta de novo depois (Retry)
             Result.retry()
         }
     }
