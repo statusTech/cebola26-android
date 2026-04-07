@@ -17,4 +17,9 @@ sealed class RegistrationUiState {
 
     object PendingUploads : RegistrationUiState()
     data class Error(val message: String) : RegistrationUiState()
+
+    // --- Fluxo de Troca de Foto ---
+    object ChangePhotoCpfInput : RegistrationUiState()
+    object ChangePhotoCamera : RegistrationUiState()
+    object ChangePhotoPreview : RegistrationUiState()
 }

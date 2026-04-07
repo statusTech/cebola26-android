@@ -58,18 +58,26 @@ class MainActivity : ComponentActivity() {
                         val showTopBar = uiState !is RegistrationUiState.Login &&
                                 uiState !is RegistrationUiState.Success &&
                                 uiState !is RegistrationUiState.Camera &&
+                                uiState !is RegistrationUiState.ChangePhotoCamera &&
                                 uiState !is RegistrationUiState.QrScanner
 
                         // Mostra botão de voltar nas etapas intermediárias ou na tela de uploads
                         val showBackButton = uiState is RegistrationUiState.StepData ||
                                 uiState is RegistrationUiState.StepPhoto ||
-                                uiState is RegistrationUiState.PendingUploads
+                                uiState is RegistrationUiState.PendingUploads ||
+                                uiState is RegistrationUiState.ChangePhotoCpfInput ||
+                                uiState is RegistrationUiState.ChangePhotoPreview
+
+                        // Mostra menu apenas na tela "home" do fluxo principal
+                        val showMenu = uiState is RegistrationUiState.StepQr
 
                         if (showTopBar) {
                             AppTopBar(
                                 onBackClick = if (showBackButton) { { viewModel.navigateBack() } } else null,
                                 pendingUploadsCount = viewModel.pendingUploadsCount,
-                                onUploadsClick = { viewModel.openPendingUploads() }
+                                onUploadsClick = { viewModel.openPendingUploads() },
+                                onChangePhotoClick = if (showMenu) { { viewModel.startChangePhotoFlow() } } else null,
+                                onLogoutClick = if (showMenu) { { viewModel.logout() } } else null
                             )
                         }
                     }
@@ -123,6 +131,21 @@ class MainActivity : ComponentActivity() {
 
                             // Nova Tela de Uploads Offline
                             is RegistrationUiState.PendingUploads -> PendingUploadsScreen(viewModel)
+
+                            // Fluxo: Trocar Foto
+                            is RegistrationUiState.ChangePhotoCpfInput -> ChangePhotoCpfScreen(viewModel)
+
+                            is RegistrationUiState.ChangePhotoCamera -> CameraScreen(
+                                viewModel = viewModel,
+                                onPhotoTaken = { viewModel.onPhotoCaptured(it) },
+                                onCancel = { viewModel.cancelCamera() }
+                            )
+
+                            is RegistrationUiState.ChangePhotoPreview -> CameraScreen(
+                                viewModel = viewModel,
+                                onPhotoTaken = { viewModel.onPhotoCaptured(it) },
+                                onCancel = { viewModel.cancelCamera() }
+                            )
 
                             // Feedback
                             is RegistrationUiState.Uploading -> LoadingScreen()

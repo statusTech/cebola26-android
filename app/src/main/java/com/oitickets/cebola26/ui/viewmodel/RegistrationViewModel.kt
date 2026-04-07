@@ -77,6 +77,12 @@ class RegistrationViewModel(
     // --- Liveness ---
     var currentLivenessAction by mutableStateOf(LivenessAction.NONE)
 
+    // --- Trocar Foto ---
+    var changePhotoCpf by mutableStateOf("")
+    var changePhotoCpfError by mutableStateOf<String?>(null)
+    var isSearchingCpf by mutableStateOf(false)
+    private var oldParticipantData: com.oitickets.cebola26.data.model.Participant? = null
+
     // --- UI State ---
     private val _uiState = MutableStateFlow<RegistrationUiState>(RegistrationUiState.Login)
     val uiState = _uiState.asStateFlow()
@@ -106,6 +112,18 @@ class RegistrationViewModel(
             is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
             is RegistrationUiState.Camera -> cancelCamera()
             is RegistrationUiState.PendingUploads -> _uiState.value = RegistrationUiState.StepQr
+            is RegistrationUiState.ChangePhotoCpfInput -> {
+                oldParticipantData = null
+                _uiState.value = RegistrationUiState.StepQr
+            }
+            is RegistrationUiState.ChangePhotoCamera -> {
+                capturedBitmap = null
+                _uiState.value = RegistrationUiState.ChangePhotoCpfInput
+            }
+            is RegistrationUiState.ChangePhotoPreview -> {
+                capturedBitmap = null
+                _uiState.value = RegistrationUiState.ChangePhotoCamera
+            }
             else -> { }
         }
     }
@@ -216,12 +234,35 @@ class RegistrationViewModel(
     }
 
     fun cancelCamera() {
-        if (_uiState.value is RegistrationUiState.Camera) _uiState.value = RegistrationUiState.StepPhoto
-        else if (_uiState.value is RegistrationUiState.StepPhoto) _uiState.value = RegistrationUiState.StepData
+        when (_uiState.value) {
+            is RegistrationUiState.Camera -> _uiState.value = RegistrationUiState.StepPhoto
+            is RegistrationUiState.StepPhoto -> _uiState.value = RegistrationUiState.StepData
+            is RegistrationUiState.ChangePhotoCamera -> _uiState.value = RegistrationUiState.ChangePhotoCpfInput
+            else -> {}
+        }
     }
 
-    fun onPhotoCaptured(bitmap: Bitmap) { capturedBitmap = bitmap; _uiState.value = RegistrationUiState.StepPhoto }
-    fun retakePhoto() { capturedBitmap = null; onStartCamera() }
+    fun onPhotoCaptured(bitmap: Bitmap) {
+        capturedBitmap = bitmap
+        _uiState.value = if (_uiState.value is RegistrationUiState.ChangePhotoCamera) {
+            RegistrationUiState.ChangePhotoPreview
+        } else {
+            RegistrationUiState.StepPhoto
+        }
+    }
+
+    fun retakePhoto() {
+        val isChangePhotoFlow = oldParticipantData != null
+        capturedBitmap = null
+        currentLivenessAction = LivenessAction.BLINK
+        isFaceGood = false
+        cameraFeedback = "Centralize o rosto"
+        _uiState.value = if (isChangePhotoFlow) {
+            RegistrationUiState.ChangePhotoCamera
+        } else {
+            RegistrationUiState.Camera
+        }
+    }
 
     fun submitRegistration() {
         if (rules.requirePhoto && capturedBitmap == null) return
@@ -273,6 +314,100 @@ class RegistrationViewModel(
                 _uiState.value = RegistrationUiState.Error("Erro: ${e.message}")
                 delay(1500)
                 _uiState.value = RegistrationUiState.StepPhoto
+            }
+        }
+    }
+
+    fun onSavePhoto() {
+        if (oldParticipantData != null) submitPhotoChange() else submitRegistration()
+    }
+
+    // --- Fluxo: Trocar Foto ---
+
+    fun startChangePhotoFlow() {
+        changePhotoCpf = ""
+        changePhotoCpfError = null
+        oldParticipantData = null
+        capturedBitmap = null
+        _uiState.value = RegistrationUiState.ChangePhotoCpfInput
+    }
+
+    fun updateChangePhotoCpf(input: String) {
+        if (input.length <= 11) {
+            changePhotoCpf = input.filter { it.isDigit() }
+            if (changePhotoCpfError != null) changePhotoCpfError = null
+        }
+    }
+
+    fun searchParticipantByCpf() {
+        if (changePhotoCpf.length != 11) { changePhotoCpfError = "CPF incompleto"; return }
+        if (!isCpfValid(changePhotoCpf)) { changePhotoCpfError = "CPF inválido"; return }
+
+        isSearchingCpf = true
+        viewModelScope.launch {
+            try {
+                val participant = withTimeout(5000L) {
+                    repository.findParticipantByCpf(changePhotoCpf)
+                }
+                if (participant != null) {
+                    oldParticipantData = participant
+                    currentLivenessAction = LivenessAction.BLINK
+                    isFaceGood = false
+                    cameraFeedback = "Centralize o rosto"
+                    capturedBitmap = null
+                    _uiState.value = RegistrationUiState.ChangePhotoCamera
+                } else {
+                    changePhotoCpfError = "CPF não encontrado"
+                }
+            } catch (e: Exception) {
+                changePhotoCpfError = "Erro de conexão. Tente novamente."
+            } finally {
+                isSearchingCpf = false
+            }
+        }
+    }
+
+    private fun submitPhotoChange() {
+        val old = oldParticipantData ?: return
+        val bitmap = capturedBitmap ?: return
+
+        _uiState.value = RegistrationUiState.Uploading
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val newParticipant = Participant(
+                    id = UUID.randomUUID().toString(),
+                    name = old.name,
+                    cpf = old.cpf,
+                    qrCode = old.qrCode,
+                    createdAt = getUtcTimestamp(),
+                    registeredBy = "${currentStaffName} (${currentStaffId})"
+                )
+
+                val result = repository.replaceParticipant(
+                    oldParticipantId = old.id,
+                    newParticipant = newParticipant,
+                    photoBitmap = bitmap
+                )
+
+                if (result.isSuccess) {
+                    _uiState.value = RegistrationUiState.Success
+                    delay(1000)
+                    oldParticipantData = null
+                    changePhotoCpf = ""
+                    changePhotoCpfError = null
+                    capturedBitmap = null
+                    isFaceGood = false
+                    _uiState.value = RegistrationUiState.StepQr
+                } else {
+                    _uiState.value = RegistrationUiState.Error("Falha ao trocar foto.")
+                    delay(1500)
+                    _uiState.value = RegistrationUiState.ChangePhotoPreview
+                }
+            } catch (e: Exception) {
+                _uiState.value = RegistrationUiState.Error("Erro: ${e.message}")
+                delay(1500)
+                _uiState.value = RegistrationUiState.ChangePhotoPreview
             }
         }
     }

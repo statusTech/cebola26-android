@@ -24,10 +24,21 @@ class UploadWorker(
     override suspend fun doWork(): Result {
         val participantJson = inputData.getString("participant_json") ?: return Result.failure()
         val localImagePath = inputData.getString("local_image_path")
+        val oldParticipantId = inputData.getString("old_participant_id")
 
         val participant = gson.fromJson(participantJson, Participant::class.java)
 
         return try {
+            // 0. Se for troca de foto, exclui registro antigo primeiro
+            if (!oldParticipantId.isNullOrBlank()) {
+                try {
+                    storage.reference.child("faces/${oldParticipantId}.jpg").delete().await()
+                } catch (e: Exception) {
+                    Log.w("UploadWorker", "Foto antiga não encontrada no Storage (pode já ter sido removida): ${e.message}")
+                }
+                db.collection("participants").document(oldParticipantId).delete().await()
+            }
+
             var downloadUrl = ""
             var file: File? = null
 

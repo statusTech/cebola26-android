@@ -78,6 +78,57 @@ class RegistrationRepository(private val context: Context) {
         }
     }
 
+    suspend fun findParticipantByCpf(cpf: String): Participant? {
+        return try {
+            val snapshot = db.collection("participants")
+                .whereEqualTo("cpf", cpf)
+                .limit(1)
+                .get()
+                .await()
+            if (!snapshot.isEmpty) snapshot.documents[0].toObject(Participant::class.java) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun replaceParticipant(
+        oldParticipantId: String,
+        newParticipant: Participant,
+        photoBitmap: Bitmap
+    ): Result<Unit> {
+        return try {
+            val fileName = "temp_${newParticipant.id}.jpg"
+            val file = File(context.filesDir, fileName)
+            FileOutputStream(file).use { out ->
+                photoBitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
+            }
+
+            val participantJson = gson.toJson(newParticipant)
+
+            val inputData = workDataOf(
+                "participant_json" to participantJson,
+                "local_image_path" to file.absolutePath,
+                "old_participant_id" to oldParticipantId
+            )
+
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val uploadWork = OneTimeWorkRequestBuilder<UploadWorker>()
+                .setConstraints(constraints)
+                .setInputData(inputData)
+                .addTag("upload_participant")
+                .build()
+
+            workManager.enqueue(uploadWork)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
     /**
      * SALVAR PARTICIPANTE (OFFLINE-FIRST)
      * 1. Salva a foto num ficheiro local temporário.

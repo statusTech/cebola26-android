@@ -358,7 +358,7 @@ fun PhotoPreviewScreen(viewModel: RegistrationViewModel) {
                     Text("REFAZER", fontSize = 12.sp, maxLines = 1)
                 }
                 Button(
-                    onClick = { viewModel.submitRegistration() },
+                    onClick = { viewModel.onSavePhoto() },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
                     modifier = Modifier.weight(1f).height(50.dp)
